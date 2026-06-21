@@ -803,38 +803,25 @@ def _perform_login(driver, wait, username: str = None, password: str = None, pho
         
         # Robust selectors for login fields
         user_input = None
-        # Try specific CSS selectors first
-        for sel in ["input[name='userName']", "input[placeholder*='handphone']", "input[placeholder*='Username']"]:
-            try:
-                el = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, sel)))
-                if el.is_displayed():
-                    user_input = el
+        # Try finding ANY visible text input first
+        try:
+            inputs = driver.find_elements(By.CSS_SELECTOR, "input")
+            for inp in inputs:
+                p = (inp.get_attribute("placeholder") or "").lower()
+                n = (inp.get_attribute("name") or "").lower()
+                t = (inp.get_attribute("type") or "").lower()
+                if inp.is_displayed() and (t == "text" or "user" in n or "phone" in n or "handphone" in p or "username" in p):
+                    user_input = inp
                     break
-            except:
-                continue
+        except: pass
 
-        # If specific selectors fail, fall back to scanning all inputs
         if not user_input:
-            try:
-                inputs = driver.find_elements(By.CSS_SELECTOR, "input")
-                for inp in inputs:
-                    p = (inp.get_attribute("placeholder") or "").lower()
-                    n = (inp.get_attribute("name") or "").lower()
-                    t = (inp.get_attribute("type") or "").lower()
-                    if inp.is_displayed() and ("user" in n or "phone" in n or "handphone" in p or "username" in p):
-                        user_input = inp
-                        break
-            except:
-                pass
-
-        # Ultimate fallback to any text input
-        if not user_input:
-            try:
-                el = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input[type='text']")))
-                if el.is_displayed():
-                    user_input = el
-            except:
-                pass
+            # Last ditch attempt with specific selectors
+            for sel in ["input[name='userName']", "input[placeholder*='handphone']", "input[placeholder*='Username']", "input[type='text']"]:
+                try:
+                    el = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, sel)))
+                    if el.is_displayed(): user_input = el; break
+                except: continue
         
         if not user_input:
             log.error(f"❌ Failed to find Username field. URL: {driver.current_url}")
