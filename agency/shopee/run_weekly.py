@@ -349,7 +349,7 @@ def run_pipeline():
             start_time_all = int(time.time())
 
             for i, merchant_name in enumerate(target_merchants):
-                log.info(f"  [{i+1}/{len(target_merchants)}] Triggering: {merchant_name}")
+                log.info(f"  [{i+1}/{len(target_merchants)}] Processing: {merchant_name}")
             
                 # Switch if not already there
                 if i > 0:
@@ -386,12 +386,15 @@ def run_pipeline():
                 log.debug(f"  📍 Confirmed ID for {merchant_name}: {active_id}")
             
                 # Store context for polling
-                merchants_context[merchant_name] = {
+                ctx = {
                     "entity_id": active_id,
                     "tob_token": session["shopee_tob_token"],
                     "cookies": session.get("extra_cookies", {}),
-                    "start_trigger_time": int(time.time())
+                    "start_trigger_time": int(time.time()),
+                    "ranges": global_ranges,
+                    "downloaded": []
                 }
+                merchants_context[merchant_name] = ctx
 
                 # Initialize client and trigger
                 client = ShopeeClient(tob_token=session["shopee_tob_token"], entity_id=active_id, extra_cookies=session.get("extra_cookies", {}))
@@ -399,10 +402,8 @@ def run_pipeline():
                 # Assign ranges based on CLI arguments
                 ranges = global_ranges
             
-                merchants_context[merchant_name]["ranges"] = ranges
-                merchants_context[merchant_name]["downloaded"] = []
-
                 # Trigger with retry on network error
+                trigger_success = True
                 for r in ranges:
                     success = False
                     for trigger_retry in range(3):
@@ -418,34 +419,23 @@ def run_pipeline():
                 
                     if not success:
                         log.error(f"  ❌ Failed to trigger export for {merchant_name} range {r.get('label')}")
+                        trigger_success = False
                     time.sleep(1)
 
-                # Batching delay: 10 merchants per batch, with 1 minute (60s) delay between batches
+                if trigger_success:
+                    # Immediately poll and download for this merchant
+                    log.info(f"  ⏳ Polling and downloading report for {merchant_name}...")
+                    _, downloaded_files = _poll_and_download_merchant(
+                        merchant_name, ctx, report_dir, global_ranges
+                    )
+                    ctx["downloaded"] = downloaded_files
+                else:
+                    ctx["downloaded"] = []
+
+                # Batching delay: 10 merchants per batch, with 15 seconds sleep between batches
                 if (i + 1) % 10 == 0 and (i + 1) < len(target_merchants):
-                    log.info(f"⏳ [BATCH] Batch limit reached ({i + 1} merchants processed). Delaying for 60 seconds before processing the next batch...")
-                    time.sleep(60)
-
-            # ── 3. Phase 2: Parallel Polling & Download ─────────────────────────
-            n_workers = min(8, len(merchants_context))  # Cap at 8 concurrent threads
-            log.info(f"⏳ [PROGRESS] PHASE 2: Parallel polling {len(merchants_context)} merchants ({n_workers} threads)...")
-            os.makedirs(report_dir, exist_ok=True)
-
-            with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                futures = {
-                    executor.submit(
-                        _poll_and_download_merchant,
-                        m_name, ctx, report_dir, global_ranges
-                    ): m_name
-                    for m_name, ctx in merchants_context.items()
-                }
-                for future in as_completed(futures):
-                    m_name_done = futures[future]
-                    try:
-                        _, downloaded_files = future.result()
-                        merchants_context[m_name_done]["downloaded"] = downloaded_files
-                        log.info(f"  ✔ [BATCH] {m_name_done}: {len(downloaded_files)}/{len(global_ranges)} files")
-                    except Exception as exc:
-                        log.error(f"  ❌ [BATCH] {m_name_done} thread raised: {exc}")
+                    log.info(f"⏳ [BATCH] Batch limit reached ({i + 1} merchants processed). Delaying for 15 seconds before processing the next batch...")
+                    time.sleep(15)
 
             # ── Summary ──────────────────────────────────────────────────────────
             log.info("📋 [PROGRESS] Download Phase Complete. Summary:")
