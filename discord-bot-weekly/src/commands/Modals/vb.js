@@ -801,13 +801,12 @@ module.exports = {
             };
 
             let currentStep = 1;
-            let logHistory = [];
             const pipeline = runWeeklyPipeline(formData, async (logLine) => {
                 const cleanLines = logLine.split('\n').map(l => l.trim()).filter(Boolean);
                 let stateChanged = false;
 
                 for (const line of cleanLines) {
-                    logHistory.push(line);
+                    currentLog = line;
 
                     if (line.includes('[JOB LOCK]') || line.includes('[WARMER]')) {
                         if (currentStep < 2) { currentStep = 2; stateChanged = true; }
@@ -845,16 +844,12 @@ module.exports = {
                     if (matchPoll && currentMerchant !== matchPoll[1].trim()) { currentMerchant = matchPoll[1].trim(); stateChanged = true; }
                 }
                 
-                if (logHistory.length > 5) {
-                    logHistory = logHistory.slice(-5);
-                }
-
                 const now = Date.now();
                 if (stateChanged || (now - lastUpdate > 3000)) {
                     if (now - lastUpdate > 1500) {
                         lastUpdate = now;
                         await finalInteraction.editReply({
-                            embeds: [buildProgressEmbed(currentStep, logHistory.join('\n'))],
+                            embeds: [buildProgressEmbed(currentStep, currentLog)],
                             components: [cancelRow]
                         }).catch(() => { });
                     }
@@ -890,37 +885,37 @@ module.exports = {
                                     const filePath = path.join(dir, file);
                                     const stats = fs.statSync(filePath);
                                     
-                                    // No longer adding attachments directly to Discord per user request
-                                    // only uploading to Google Drive
-
-                                    if (APPS_SCRIPT_DRIVE_URL && APPS_SCRIPT_DRIVE_URL !== "ISI_DENGAN_URL_WEB_APP_APPS_SCRIPT_ANDA") {
-                                        try {
-                                            const fileContent = fs.readFileSync(filePath);
-                                            const base64Content = fileContent.toString('base64');
-                                            
-                                            console.log(`[DRIVE UPLOAD] Uploading ${file}...`);
-                                            const driveRes = await uploadToDrive(APPS_SCRIPT_DRIVE_URL, {
-                                                folderId: "1AF7zvgT0fuMTzTrXV_FKwUWj1R7JeOcx",
-                                                platform: `${plat.toUpperCase()}_VB`, // e.g. GRAB_VB or SHOPEE_VB
-                                                dateRange: `${startDate}_to_${endDate}`,
-                                                filename: file,
-                                                content: base64Content
-                                            });
-
-                                            if (driveRes && driveRes.status === 'success') {
-                                                uploadedFiles.push({
-                                                    name: file,
-                                                    url: driveRes.url
+                                    // Hanya upload file yang dibuat/dimodifikasi selama pipeline ini berjalan
+                                    if (stats.mtimeMs >= startTime) {
+                                        if (APPS_SCRIPT_DRIVE_URL && APPS_SCRIPT_DRIVE_URL !== "ISI_DENGAN_URL_WEB_APP_APPS_SCRIPT_ANDA") {
+                                            try {
+                                                const fileContent = fs.readFileSync(filePath);
+                                                const base64Content = fileContent.toString('base64');
+                                                
+                                                console.log(`[DRIVE UPLOAD] Uploading ${file}...`);
+                                                const driveRes = await uploadToDrive(APPS_SCRIPT_DRIVE_URL, {
+                                                    folderId: "1AF7zvgT0fuMTzTrXV_FKwUWj1R7JeOcx",
+                                                    platform: `${plat.toUpperCase()}_VB`, // e.g. GRAB_VB or SHOPEE_VB
+                                                    dateRange: `${startDate}_to_${endDate}`,
+                                                    filename: file,
+                                                    content: base64Content
                                                 });
-                                                if (driveRes.folderUrl) {
-                                                    uploadedFolderUrl = driveRes.folderUrl;
+
+                                                if (driveRes && driveRes.status === 'success') {
+                                                    uploadedFiles.push({
+                                                        name: file,
+                                                        url: driveRes.url
+                                                    });
+                                                    if (driveRes.folderUrl) {
+                                                        uploadedFolderUrl = driveRes.folderUrl;
+                                                    }
+                                                    console.log(`[DRIVE UPLOAD] Successful! Url: ${driveRes.url}`);
+                                                } else {
+                                                    console.error(`[DRIVE UPLOAD] Failed for ${file}:`, driveRes ? driveRes.message : 'No response');
                                                 }
-                                                console.log(`[DRIVE UPLOAD] Successful! Url: ${driveRes.url}`);
-                                            } else {
-                                                console.error(`[DRIVE UPLOAD] Failed for ${file}:`, driveRes ? driveRes.message : 'No response');
+                                            } catch (uploadErr) {
+                                                console.error(`[DRIVE UPLOAD] Error for ${file}:`, uploadErr);
                                             }
-                                        } catch (uploadErr) {
-                                            console.error(`[DRIVE UPLOAD] Error for ${file}:`, uploadErr);
                                         }
                                     }
                                 }
