@@ -84,8 +84,11 @@ def autofill_login_form(driver, cred, name):
 
 def save_current_session(driver, name):
     try:
-        from core.browser import _trigger_and_extract_tokens, get_all_cookies_dict, save_session
+        from core.browser import _trigger_and_extract_tokens, get_all_cookies_dict, save_session, set_session_file, get_session_file_path
         log.info(f"💾 Menyimpan sesi baru untuk VB '{name}'...")
+        # Ensure the background thread has its thread-local session file configured correctly
+        set_session_file(get_session_file_path(name))
+        
         t, eid = _trigger_and_extract_tokens(driver)
         if t:
             all_c = get_all_cookies_dict(driver)
@@ -136,7 +139,7 @@ def launch_portal_browser(name):
         time.sleep(2)
         
         # Load saved session cookies if they exist
-        saved = load_session()
+        saved = load_session(name)
         if saved:
             log.info(f"🔑 Memasukkan cookie sesi tersimpan untuk VB '{name}'...")
             try:
