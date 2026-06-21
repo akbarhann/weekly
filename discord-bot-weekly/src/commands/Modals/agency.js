@@ -29,7 +29,7 @@ function getWeeklyTargetDir(target) {
 }
 
 // Gantilah URL di bawah ini dengan URL Web App dari Apps Script Anda setelah di-deploy
-const APPS_SCRIPT_DRIVE_URL = "https://script.google.com/macros/s/AKfycby0FNvijiWhJJmgrY7GMNtw3-rOg8sBdMygOm2S1c65SArfq5RHxEdF0u0xLerUxK0S/exec";
+const APPS_SCRIPT_DRIVE_URL = "https://script.google.com/macros/s/AKfycbxmU3_gc8rAMXGyhsLGBv5RHaV-hAcFkgxG6ijF8YwpbU_LfdH6LBHFMqddaAzvmhKlwA/exec";
 
 // Memory lock for active weekly pipeline jobs
 let isWeeklyJobRunning = false;
@@ -924,11 +924,19 @@ module.exports = {
                         .setFooter({ text: 'Sistem Weekly Agency Performance' })
                         .setTimestamp();
 
-                    await progressMsg.edit({
-                        embeds: [successEmbed],
-                        files: attachments,
-                        components: []
-                    });
+                    try {
+                        await progressMsg.edit({
+                            embeds: [successEmbed],
+                            files: attachments,
+                            components: []
+                        });
+                    } catch (editErr) {
+                        await interaction.channel.send({
+                            content: `Berhasil menyelesaikan pipeline untuk **${platform.toUpperCase()}**!`,
+                            embeds: [successEmbed],
+                            files: attachments
+                        }).catch(() => {});
+                    }
                 } else {
                     const errSnippet = result.output.slice(-600)
                         .replace(/\x1B\[[0-9;]*m/g, '')
@@ -946,10 +954,17 @@ module.exports = {
                         .setFooter({ text: 'Hubungi administrator jika masalah berlanjut.' })
                         .setTimestamp();
 
-                    await progressMsg.edit({
-                        embeds: [failedEmbed],
-                        components: []
-                    });
+                    try {
+                        await progressMsg.edit({
+                            embeds: [failedEmbed],
+                            components: []
+                        });
+                    } catch (editErr) {
+                        await interaction.channel.send({
+                            content: `Pipeline **${platform.toUpperCase()}** gagal!`,
+                            embeds: [failedEmbed]
+                        }).catch(() => {});
+                    }
                 }
             }).catch(async (err) => {
                 isWeeklyJobRunning = false;
@@ -961,10 +976,17 @@ module.exports = {
                     .setDescription(`\`${err.message}\``)
                     .setTimestamp();
 
-                await progressMsg.edit({
-                    embeds: [errorEmbed],
-                    components: []
-                }).catch(() => { });
+                try {
+                    await progressMsg.edit({
+                        embeds: [errorEmbed],
+                        components: []
+                    });
+                } catch (editErr) {
+                    await interaction.channel.send({
+                        content: `Pipeline **${platform.toUpperCase()}** mengalami error sistem!`,
+                        embeds: [errorEmbed]
+                    }).catch(() => {});
+                }
             });
 
         } catch (err) {

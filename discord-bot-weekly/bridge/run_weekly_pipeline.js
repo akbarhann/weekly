@@ -159,24 +159,26 @@ function runWeeklyPipeline(formData, onLog = () => { }) {
 
         let output = '';
 
+        const readline = require('readline');
+        
         proc = spawn(PYTHON_EXE, args, {
             cwd: WEEKLY_DIR,
             env,
             detached: true,
         });
 
-        proc.stdout.on('data', (data) => {
-            const line = data.toString();
-            output += line;
-            process.stdout.write(data);
+        const rlStdout = readline.createInterface({ input: proc.stdout });
+        rlStdout.on('line', (line) => {
+            output += line + '\n';
+            process.stdout.write(line + '\n');
             const clean = line.replace(/\x1B\[[0-9;]*m/g, '').trim();
-            if (clean) onLog(clean.substring(0, 200));
+            if (clean) onLog(clean);
         });
 
-        proc.stderr.on('data', (data) => {
-            const str = data.toString();
-            output += str;
-            process.stderr.write(data);
+        const rlStderr = readline.createInterface({ input: proc.stderr });
+        rlStderr.on('line', (line) => {
+            output += line + '\n';
+            process.stderr.write(line + '\n');
         });
 
         const cleanupAndResolve = async (data) => {
