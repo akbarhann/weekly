@@ -1,11 +1,11 @@
-const { 
-    SlashCommandBuilder, 
-    ModalBuilder, 
-    TextInputBuilder, 
-    TextInputStyle, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
+const {
+    SlashCommandBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
     EmbedBuilder,
     AttachmentBuilder,
     StringSelectMenuBuilder
@@ -65,7 +65,7 @@ function uploadToDrive(url, payload) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const postData = JSON.stringify(payload);
-        
+
         const options = {
             hostname: urlObj.hostname,
             path: urlObj.pathname + urlObj.search,
@@ -75,7 +75,7 @@ function uploadToDrive(url, payload) {
                 'Content-Length': Buffer.byteLength(postData)
             }
         };
-        
+
         const req = https.request(options, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 const redirectUrl = res.headers.location;
@@ -93,7 +93,7 @@ function uploadToDrive(url, payload) {
                 }).on('error', (err) => reject(err));
                 return;
             }
-            
+
             let data = '';
             res.on('data', (chunk) => data += chunk);
             res.on('end', () => {
@@ -105,7 +105,7 @@ function uploadToDrive(url, payload) {
                 }
             });
         });
-        
+
         req.on('error', (err) => reject(err));
         req.write(postData);
         req.end();
@@ -243,8 +243,8 @@ const makeProgressEmbed = (currentStepName, title, description, fields = [], has
 };
 
 // Selection helper
-async function askSelection(interaction, { stepName, title, placeholder, options, minValues = 1, maxValues = 1, fields = [], isFirstStep = false, hasOutletStep = true, isAllPlatform = false }) {
-    let selectedValues = new Set();
+async function askSelection(interaction, { stepName, title, placeholder, options, minValues = 1, maxValues = 1, fields = [], isFirstStep = false, hasOutletStep = true, isAllPlatform = false, showBackButton = false, initialSelections = [] }) {
+    let selectedValues = new Set(initialSelections);
 
     const getComponents = () => {
         const rows = [];
@@ -272,13 +272,25 @@ async function askSelection(interaction, { stepName, title, placeholder, options
 
         const isDisabled = selectedValues.size < minValues;
 
-        const nextButton = new ButtonBuilder()
-            .setCustomId('vb_continue_btn')
-            .setLabel(selectedValues.size >= minValues ? '➡️ Lanjutkan' : (minValues === 1 ? 'Pilih opsi terlebih dahulu' : `Pilih minimal ${minValues} opsi`))
-            .setStyle(selectedValues.size >= minValues ? ButtonStyle.Success : ButtonStyle.Secondary)
-            .setDisabled(isDisabled);
+        const buttons = [];
+        if (showBackButton) {
+            buttons.push(
+                new ButtonBuilder()
+                    .setCustomId('vb_back_btn')
+                    .setLabel('⬅️ Kembali')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        }
 
-        rows.push(new ActionRowBuilder().addComponents(nextButton));
+        buttons.push(
+            new ButtonBuilder()
+                .setCustomId('vb_continue_btn')
+                .setLabel(selectedValues.size >= minValues ? '➡️ Lanjutkan' : (minValues === 1 ? 'Pilih opsi terlebih dahulu' : `Pilih minimal ${minValues} opsi`))
+                .setStyle(selectedValues.size >= minValues ? ButtonStyle.Success : ButtonStyle.Secondary)
+                .setDisabled(isDisabled)
+        );
+
+        rows.push(new ActionRowBuilder().addComponents(buttons));
         return rows;
     };
 
@@ -337,12 +349,16 @@ async function askSelection(interaction, { stepName, title, placeholder, options
                 });
             } else if (i.customId === 'vb_continue_btn') {
                 collector.stop('confirmed');
+            } else if (i.customId === 'vb_back_btn') {
+                collector.stop('back');
             }
         });
 
         collector.on('end', (collected, reason) => {
             if (reason === 'confirmed' && latestInteraction) {
-                resolve({ values: Array.from(selectedValues), lastInteraction: latestInteraction });
+                resolve({ status: 'next', values: Array.from(selectedValues), lastInteraction: latestInteraction });
+            } else if (reason === 'back' && latestInteraction) {
+                resolve({ status: 'back', lastInteraction: latestInteraction });
             } else {
                 reject(new Error('Timeout or cancelled'));
             }
@@ -400,59 +416,89 @@ module.exports = {
             const WEEKLY_DIR = getWeeklyTargetDir(target);
 
             // STEP 1: Pilih Aplikator
-            const aplikatorResult = await askSelection(interaction, {
-                stepName: 'Aplikator',
-                title: '📱 Pilih Aplikator',
-                placeholder: 'Pilih platform aplikator...',
-                options: [
-                    { label: '🌟 Semua Aplikator', value: 'all', description: 'Tarik data untuk GrabFood & ShopeeFood' },
-                    { label: 'GrabFood', value: 'grab', emoji: { name: '🟢' }, description: 'Hanya tarik data GrabFood' },
-                    { label: 'ShopeeFood', value: 'shopee', emoji: { name: '🟠' }, description: 'Hanya tarik data ShopeeFood' }
-                ],
-                minValues: 1,
-                maxValues: 1,
-                fields: [
-                    { name: 'Tipe', value: 'VB', inline: true }
-                ],
-                isFirstStep: true,
-                hasOutletStep: true,
-                isAllPlatform: false
-            });
-
-            const platform = aplikatorResult.values[0];
-
-            // STEP 2: Pilih Cakupan Tarikan
-            const scopeResult = await askSelection(aplikatorResult.lastInteraction, {
-                stepName: 'Cakupan',
-                title: '🏢 Cakupan Outlet',
-                placeholder: 'Pilih cakupan outlet...',
-                options: [
-                    { label: 'Semua Outlet', value: 'all_outlets', description: 'Tarik data untuk seluruh outlet di GSheets' },
-                    { label: 'Pilih Merchant Tertentu', value: 'select_merchant', description: 'Pilih satu atau lebih outlet dari daftar' }
-                ],
-                minValues: 1,
-                maxValues: 1,
-                fields: [
-                    { name: 'Tipe', value: 'VB', inline: true },
-                    { name: 'Platform', value: platform.toUpperCase(), inline: true }
-                ],
-                hasOutletStep: true,
-                isAllPlatform: platform === 'all'
-            });
-
-            const scope = scopeResult.values[0];
-            const hasOutletStep = scope === 'select_merchant';
-
+            let step = 'aplikator';
+            let platform = null;
+            let scope = null;
             let selectedOutlets = [];
-            let lastInteractionAfterOutlet = scopeResult.lastInteraction;
+            let grabResultValues = [];
+            let shopeeResultValues = [];
+            let lastInteraction = interaction;
 
-            // STEP 3: Pilih Outlet (Jika select_merchant)
-            if (hasOutletStep) {
-                if (platform === 'all') {
-                    // STEP 3a: Pilih Outlet Grab
+            let startDate = '';
+            let endDate = '';
+            let finalInteraction = null;
+
+            while (true) {
+                if (step === 'aplikator') {
+                    const result = await askSelection(lastInteraction, {
+                        stepName: 'Aplikator',
+                        title: '📱 Pilih Aplikator',
+                        placeholder: 'Pilih platform aplikator...',
+                        options: [
+                            { label: '🌟 Semua Aplikator', value: 'all', description: 'Tarik data untuk GrabFood & ShopeeFood' },
+                            { label: 'GrabFood', value: 'grab', emoji: { name: '🟢' }, description: 'Hanya tarik data GrabFood' },
+                            { label: 'ShopeeFood', value: 'shopee', emoji: { name: '🟠' }, description: 'Hanya tarik data ShopeeFood' }
+                        ],
+                        minValues: 1,
+                        maxValues: 1,
+                        fields: [
+                            { name: 'Tipe', value: 'VB', inline: true }
+                        ],
+                        isFirstStep: (lastInteraction === interaction),
+                        hasOutletStep: true,
+                        isAllPlatform: false,
+                        showBackButton: false
+                    });
+
+                    platform = result.values[0];
+                    lastInteraction = result.lastInteraction;
+                    step = 'scope';
+
+                } else if (step === 'scope') {
+                    const result = await askSelection(lastInteraction, {
+                        stepName: 'Cakupan',
+                        title: '🏢 Cakupan Outlet',
+                        placeholder: 'Pilih cakupan outlet...',
+                        options: [
+                            { label: 'Semua Outlet', value: 'all_outlets', description: 'Tarik data untuk seluruh outlet di GSheets' },
+                            { label: 'Pilih Merchant Tertentu', value: 'select_merchant', description: 'Pilih satu atau lebih outlet dari daftar' }
+                        ],
+                        minValues: 1,
+                        maxValues: 1,
+                        fields: [
+                            { name: 'Tipe', value: 'VB', inline: true },
+                            { name: 'Platform', value: platform.toUpperCase(), inline: true }
+                        ],
+                        hasOutletStep: true,
+                        isAllPlatform: platform === 'all',
+                        showBackButton: true,
+                        initialSelections: scope ? [scope] : []
+                    });
+
+                    if (result.status === 'back') {
+                        step = 'aplikator';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
+
+                    scope = result.values[0];
+                    lastInteraction = result.lastInteraction;
+
+                    if (scope === 'select_merchant') {
+                        if (platform === 'all') {
+                            step = 'outlet_grab';
+                        } else {
+                            step = 'outlet_single';
+                        }
+                    } else {
+                        selectedOutlets = [];
+                        step = 'period';
+                    }
+
+                } else if (step === 'outlet_grab') {
                     const grabOutlets = await getVBOutlets('grab');
                     if (grabOutlets.length === 0) {
-                        return lastInteractionAfterOutlet.reply({
+                        return lastInteraction.reply({
                             content: '❌ Gagal memuat daftar outlet Grab live.',
                             flags: 64
                         });
@@ -462,7 +508,7 @@ module.exports = {
                         value: name
                     }));
 
-                    const grabResult = await askSelection(scopeResult.lastInteraction, {
+                    const result = await askSelection(lastInteraction, {
                         stepName: 'Outlet Grab',
                         title: '🏪 Pilih Outlet Grab VB',
                         placeholder: 'Pilih satu atau lebih outlet Grab...',
@@ -475,16 +521,25 @@ module.exports = {
                             { name: 'Cakupan', value: 'Merchant Terpilih', inline: true }
                         ],
                         hasOutletStep: true,
-                        isAllPlatform: true
+                        isAllPlatform: true,
+                        showBackButton: true,
+                        initialSelections: grabResultValues
                     });
 
-                    selectedOutlets = selectedOutlets.concat(grabResult.values);
-                    lastInteractionAfterOutlet = grabResult.lastInteraction;
+                    if (result.status === 'back') {
+                        step = 'scope';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
 
-                    // STEP 3b: Pilih Outlet Shopee
+                    grabResultValues = result.values;
+                    lastInteraction = result.lastInteraction;
+                    step = 'outlet_shopee';
+
+                } else if (step === 'outlet_shopee') {
                     const shopeeOutlets = await getVBOutlets('shopee');
                     if (shopeeOutlets.length === 0) {
-                        return lastInteractionAfterOutlet.reply({
+                        return lastInteraction.reply({
                             content: '❌ Gagal memuat daftar outlet Shopee live.',
                             flags: 64
                         });
@@ -494,7 +549,7 @@ module.exports = {
                         value: name
                     }));
 
-                    const shopeeResult = await askSelection(lastInteractionAfterOutlet, {
+                    const result = await askSelection(lastInteraction, {
                         stepName: 'Outlet Shopee',
                         title: '🏪 Pilih Outlet Shopee VB',
                         placeholder: 'Pilih satu atau lebih outlet Shopee...',
@@ -505,19 +560,29 @@ module.exports = {
                             { name: 'Tipe', value: 'VB', inline: true },
                             { name: 'Platform', value: 'ALL (Shopee)', inline: true },
                             { name: 'Cakupan', value: 'Merchant Terpilih', inline: true },
-                            { name: 'Outlet Grab Terpilih', value: grabResult.values.length.toString(), inline: true }
+                            { name: 'Outlet Grab Terpilih', value: grabResultValues.length.toString(), inline: true }
                         ],
                         hasOutletStep: true,
-                        isAllPlatform: true
+                        isAllPlatform: true,
+                        showBackButton: true,
+                        initialSelections: shopeeResultValues
                     });
 
-                    selectedOutlets = selectedOutlets.concat(shopeeResult.values);
-                    lastInteractionAfterOutlet = shopeeResult.lastInteraction;
+                    if (result.status === 'back') {
+                        step = 'outlet_grab';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
 
-                } else {
+                    shopeeResultValues = result.values;
+                    selectedOutlets = grabResultValues.concat(shopeeResultValues);
+                    lastInteraction = result.lastInteraction;
+                    step = 'period';
+
+                } else if (step === 'outlet_single') {
                     const weeklyOutlets = await getVBOutlets(platform);
                     if (weeklyOutlets.length === 0) {
-                        return lastInteractionAfterOutlet.reply({
+                        return lastInteraction.reply({
                             content: '❌ Gagal memuat daftar outlet live untuk platform terpilih.',
                             flags: 64
                         });
@@ -527,7 +592,7 @@ module.exports = {
                         value: name
                     }));
 
-                    const outletResult = await askSelection(scopeResult.lastInteraction, {
+                    const result = await askSelection(lastInteraction, {
                         stepName: 'Outlet',
                         title: '🏪 Pilih Outlet VB',
                         placeholder: 'Pilih satu atau lebih outlet...',
@@ -540,190 +605,225 @@ module.exports = {
                             { name: 'Cakupan', value: 'Merchant Terpilih', inline: true }
                         ],
                         hasOutletStep: true,
-                        isAllPlatform: false
+                        isAllPlatform: false,
+                        showBackButton: true,
+                        initialSelections: selectedOutlets
                     });
 
-                    selectedOutlets = outletResult.values;
-                    lastInteractionAfterOutlet = outletResult.lastInteraction;
+                    if (result.status === 'back') {
+                        step = 'scope';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
+
+                    selectedOutlets = result.values;
+                    lastInteraction = result.lastInteraction;
+                    step = 'period';
+
+                } else if (step === 'period') {
+                    const today = new Date();
+                    const dayOfWeek = today.getDay();
+                    const daysToLastSunday = dayOfWeek === 0 ? 7 : dayOfWeek;
+                    const lastSunday = new Date(today);
+                    lastSunday.setDate(today.getDate() - daysToLastSunday);
+                    const lastMonday = new Date(lastSunday);
+                    lastMonday.setDate(lastSunday.getDate() - 6);
+
+                    const formatDateDisplay = (d) => {
+                        const day = String(d.getDate()).padStart(2, '0');
+                        const month = String(d.getMonth() + 1).padStart(2, '0');
+                        const year = d.getFullYear();
+                        return `${day}-${month}-${year}`;
+                    };
+
+                    const defaultStartDisp = formatDateDisplay(lastMonday);
+                    const defaultEndDisp = formatDateDisplay(lastSunday);
+
+                    const defaultStartISO = toISOFormat(lastMonday);
+                    const defaultEndISO = toISOFormat(lastSunday);
+
+                    const currentFields = [
+                        { name: 'Tipe', value: 'VB', inline: true },
+                        { name: 'Platform', value: platform.toUpperCase(), inline: true },
+                        { name: 'Cakupan', value: (scope === 'select_merchant') ? `Merchant Terpilih (${selectedOutlets.length})` : 'Semua Outlet', inline: true }
+                    ];
+
+                    let errorMsg = null;
+
+                    const getPeriodEmbed = () => {
+                        let desc = 'Silakan pilih **📅 7 Hari Penuh (Senin-Minggu)**, atau klik **⚙️ Custom Date Range** untuk menentukan rentang tanggal secara manual.';
+                        if (errorMsg) {
+                            desc = `❌ **Error:** ${errorMsg}\n\n` + desc;
+                        }
+                        return makeProgressEmbed('Periode', '📅 Pilih Periode Laporan', desc, currentFields, (scope === 'select_merchant'), platform === 'all');
+                    };
+
+                    const getPeriodComponents = () => {
+                        return [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('vb_shortcut_7_days_btn')
+                                    .setLabel(`📅 7 Hari Penuh (${defaultStartDisp} s/d ${defaultEndDisp})`)
+                                    .setStyle(ButtonStyle.Success),
+                                new ButtonBuilder()
+                                    .setCustomId('vb_open_date_modal_btn')
+                                    .setLabel('⚙️ Custom Date Range')
+                                    .setStyle(ButtonStyle.Secondary),
+                                new ButtonBuilder()
+                                    .setCustomId('vb_back_btn')
+                                    .setLabel('⬅️ Kembali')
+                                    .setStyle(ButtonStyle.Secondary)
+                            )
+                        ];
+                    };
+
+                    await lastInteraction.update({
+                        embeds: [getPeriodEmbed()],
+                        components: getPeriodComponents()
+                    });
+
+                    const periodMsg = lastInteraction.message || await lastInteraction.fetchReply();
+
+                    const getPeriodChoice = () => {
+                        return new Promise((resolvePeriod, rejectPeriod) => {
+                            const collector = periodMsg.createMessageComponentCollector({
+                                filter: i => i.user.id === interaction.user.id && ['vb_shortcut_7_days_btn', 'vb_open_date_modal_btn', 'vb_back_btn'].includes(i.customId),
+                                time: 300000
+                            });
+
+                            collector.on('collect', async i => {
+                                if (i.customId === 'vb_back_btn') {
+                                    collector.stop('back');
+                                    resolvePeriod({
+                                        status: 'back',
+                                        lastInteract: i
+                                    });
+                                    return;
+                                }
+
+                                if (i.customId === 'vb_shortcut_7_days_btn') {
+                                    collector.stop('confirmed');
+                                    resolvePeriod({
+                                        status: 'confirmed',
+                                        start: defaultStartISO,
+                                        end: defaultEndISO,
+                                        lastInteract: i
+                                    });
+                                    return;
+                                }
+
+                                // Jika klik custom date, tampilkan modal
+                                const modalId = `vb_date_modal_${Date.now()}`;
+                                const dateModal = new ModalBuilder()
+                                    .setCustomId(modalId)
+                                    .setTitle('Rentang Tanggal Custom');
+
+                                const startInput = new TextInputBuilder()
+                                    .setCustomId('start_date_input')
+                                    .setLabel('TANGGAL MULAI (DD-MM-YYYY)')
+                                    .setStyle(TextInputStyle.Short)
+                                    .setPlaceholder('Contoh: 01-06-2026')
+                                    .setMinLength(10)
+                                    .setMaxLength(10)
+                                    .setRequired(true);
+
+                                const endInput = new TextInputBuilder()
+                                    .setCustomId('end_date_input')
+                                    .setLabel('TANGGAL SELESAI (DD-MM-YYYY)')
+                                    .setStyle(TextInputStyle.Short)
+                                    .setPlaceholder('Contoh: 07-06-2026')
+                                    .setMinLength(10)
+                                    .setMaxLength(10)
+                                    .setRequired(true);
+
+                                dateModal.addComponents(
+                                    new ActionRowBuilder().addComponents(startInput),
+                                    new ActionRowBuilder().addComponents(endInput)
+                                );
+
+                                await i.showModal(dateModal);
+
+                                try {
+                                    const modalSubmit = await i.awaitModalSubmit({
+                                        filter: mi => mi.user.id === interaction.user.id && mi.customId === modalId,
+                                        time: 120000
+                                    });
+
+                                    const startDateStr = modalSubmit.fields.getTextInputValue('start_date_input').trim();
+                                    const endDateStr = modalSubmit.fields.getTextInputValue('end_date_input').trim();
+
+                                    const dateRegex = /^\d{2}-\d{2}-\d{4}$/;
+                                    if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
+                                        errorMsg = 'Format tanggal salah. Gunakan format DD-MM-YYYY (contoh: 01-06-2026).';
+                                        await modalSubmit.update({
+                                            embeds: [getPeriodEmbed()],
+                                            components: getPeriodComponents()
+                                        });
+                                        return;
+                                    }
+
+                                    const parsedStart = parseDate(startDateStr);
+                                    const parsedEnd = parseDate(endDateStr);
+
+                                    if (!parsedStart || !parsedEnd) {
+                                        errorMsg = 'Tanggal tidak ada di kalender (contoh: 31 Februari).';
+                                        await modalSubmit.update({
+                                            embeds: [getPeriodEmbed()],
+                                            components: getPeriodComponents()
+                                        });
+                                        return;
+                                    }
+
+                                    if (parsedStart > parsedEnd) {
+                                        errorMsg = 'Tanggal mulai tidak boleh melebihi tanggal selesai.';
+                                        await modalSubmit.update({
+                                            embeds: [getPeriodEmbed()],
+                                            components: getPeriodComponents()
+                                        });
+                                        return;
+                                    }
+
+                                    collector.stop('confirmed');
+                                    resolvePeriod({
+                                        status: 'confirmed',
+                                        start: toISOFormat(parsedStart),
+                                        end: toISOFormat(parsedEnd),
+                                        lastInteract: modalSubmit
+                                    });
+                                } catch (err) {
+                                    console.error('Error awaiting modal submit:', err);
+                                }
+                            });
+
+                            collector.on('end', (collected, reason) => {
+                                if (reason !== 'confirmed' && reason !== 'back') {
+                                    rejectPeriod(new Error('Timeout atau dibatalkan'));
+                                }
+                            });
+                        });
+                    };
+
+                    const periodResults = await getPeriodChoice();
+                    if (periodResults.status === 'back') {
+                        lastInteraction = periodResults.lastInteract;
+                        if (scope === 'select_merchant') {
+                            if (platform === 'all') {
+                                step = 'outlet_shopee';
+                            } else {
+                                step = 'outlet_single';
+                            }
+                        } else {
+                            step = 'scope';
+                        }
+                        continue;
+                    }
+
+                    startDate = periodResults.start;
+                    endDate = periodResults.end;
+                    finalInteraction = periodResults.lastInteract;
+                    break;
                 }
             }
-
-            // STEP 3: Pilih Periode (menggunakan tombol seperti /start)
-            const today = new Date();
-            const dayOfWeek = today.getDay();
-            const daysToLastSunday = dayOfWeek === 0 ? 7 : dayOfWeek;
-            const lastSunday = new Date(today);
-            lastSunday.setDate(today.getDate() - daysToLastSunday);
-            const lastMonday = new Date(lastSunday);
-            lastMonday.setDate(lastSunday.getDate() - 6);
-
-            const formatDateDisplay = (d) => {
-                const day = String(d.getDate()).padStart(2, '0');
-                const month = String(d.getMonth() + 1).padStart(2, '0');
-                const year = d.getFullYear();
-                return `${day}-${month}-${year}`;
-            };
-
-            const defaultStartDisp = formatDateDisplay(lastMonday);
-            const defaultEndDisp = formatDateDisplay(lastSunday);
-
-            const defaultStartISO = toISOFormat(lastMonday);
-            const defaultEndISO = toISOFormat(lastSunday);
-
-            const currentFields = [
-                { name: 'Tipe', value: 'VB', inline: true },
-                { name: 'Platform', value: platform.toUpperCase(), inline: true },
-                { name: 'Cakupan', value: hasOutletStep ? `Merchant Terpilih (${selectedOutlets.length})` : 'Semua Outlet', inline: true }
-            ];
-
-            let errorMsg = null;
-            let startDate = '';
-            let endDate = '';
-            let finalInteraction = null;
-
-            const getPeriodEmbed = () => {
-                let desc = 'Silakan pilih **📅 7 Hari Penuh (Senin-Minggu)**, atau klik **⚙️ Custom Date Range** untuk menentukan rentang tanggal secara manual.';
-                if (errorMsg) {
-                    desc = `❌ **Error:** ${errorMsg}\n\n` + desc;
-                }
-                return makeProgressEmbed('Periode', '📅 Pilih Periode Laporan', desc, currentFields, hasOutletStep, platform === 'all');
-            };
-
-            const getPeriodComponents = () => {
-                return [
-                    new ActionRowBuilder().addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('vb_shortcut_7_days_btn')
-                            .setLabel(`📅 7 Hari Penuh (${defaultStartDisp} s/d ${defaultEndDisp})`)
-                            .setStyle(ButtonStyle.Success),
-                        new ButtonBuilder()
-                            .setCustomId('vb_open_date_modal_btn')
-                            .setLabel('⚙️ Custom Date Range')
-                            .setStyle(ButtonStyle.Secondary)
-                    )
-                ];
-            };
-
-            // Update interaction to show the buttons
-            await lastInteractionAfterOutlet.update({
-                embeds: [getPeriodEmbed()],
-                components: getPeriodComponents()
-            });
-
-            const periodMsg = lastInteractionAfterOutlet.message || await lastInteractionAfterOutlet.fetchReply();
-
-            const getPeriodChoice = () => {
-                return new Promise((resolvePeriod, rejectPeriod) => {
-                    const collector = periodMsg.createMessageComponentCollector({
-                        filter: i => i.user.id === interaction.user.id && ['vb_shortcut_7_days_btn', 'vb_open_date_modal_btn'].includes(i.customId),
-                        time: 300000
-                    });
-
-                    collector.on('collect', async i => {
-                        if (i.customId === 'vb_shortcut_7_days_btn') {
-                            collector.stop('confirmed');
-                            resolvePeriod({
-                                start: defaultStartISO,
-                                end: defaultEndISO,
-                                lastInteract: i
-                            });
-                            return;
-                        }
-
-                        // Jika klik custom date, tampilkan modal
-                        const modalId = `vb_date_modal_${Date.now()}`;
-                        const dateModal = new ModalBuilder()
-                            .setCustomId(modalId)
-                            .setTitle('Rentang Tanggal Custom');
-
-                        const startInput = new TextInputBuilder()
-                            .setCustomId('start_date_input')
-                            .setLabel('TANGGAL MULAI (DD-MM-YYYY)')
-                            .setStyle(TextInputStyle.Short)
-                            .setPlaceholder('Contoh: 01-06-2026')
-                            .setMinLength(10)
-                            .setMaxLength(10)
-                            .setRequired(true);
-
-                        const endInput = new TextInputBuilder()
-                            .setCustomId('end_date_input')
-                            .setLabel('TANGGAL SELESAI (DD-MM-YYYY)')
-                            .setStyle(TextInputStyle.Short)
-                            .setPlaceholder('Contoh: 07-06-2026')
-                            .setMinLength(10)
-                            .setMaxLength(10)
-                            .setRequired(true);
-
-                        dateModal.addComponents(
-                            new ActionRowBuilder().addComponents(startInput),
-                            new ActionRowBuilder().addComponents(endInput)
-                        );
-
-                        await i.showModal(dateModal);
-
-                        try {
-                            const modalSubmit = await i.awaitModalSubmit({
-                                filter: mi => mi.user.id === interaction.user.id && mi.customId === modalId,
-                                time: 120000
-                            });
-
-                            const startDateStr = modalSubmit.fields.getTextInputValue('start_date_input').trim();
-                            const endDateStr = modalSubmit.fields.getTextInputValue('end_date_input').trim();
-
-                            const dateRegex = /^\d{2}-\d{2}-\d{4}$/;
-                            if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
-                                errorMsg = 'Format tanggal salah. Gunakan format DD-MM-YYYY (contoh: 01-06-2026).';
-                                await modalSubmit.update({
-                                    embeds: [getPeriodEmbed()],
-                                    components: getPeriodComponents()
-                                });
-                                return;
-                            }
-
-                            const parsedStart = parseDate(startDateStr);
-                            const parsedEnd = parseDate(endDateStr);
-
-                            if (!parsedStart || !parsedEnd) {
-                                errorMsg = 'Tanggal tidak ada di kalender (contoh: 31 Februari).';
-                                await modalSubmit.update({
-                                    embeds: [getPeriodEmbed()],
-                                    components: getPeriodComponents()
-                                });
-                                return;
-                            }
-
-                            if (parsedStart > parsedEnd) {
-                                errorMsg = 'Tanggal mulai tidak boleh melebihi tanggal selesai.';
-                                await modalSubmit.update({
-                                    embeds: [getPeriodEmbed()],
-                                    components: getPeriodComponents()
-                                });
-                                return;
-                            }
-
-                            collector.stop('confirmed');
-                            resolvePeriod({
-                                start: toISOFormat(parsedStart),
-                                end: toISOFormat(parsedEnd),
-                                lastInteract: modalSubmit
-                            });
-                        } catch (err) {
-                            console.error('Error awaiting modal submit:', err);
-                        }
-                    });
-
-                    collector.on('end', (collected, reason) => {
-                        if (reason !== 'confirmed') {
-                            rejectPeriod(new Error('Timeout atau dibatalkan'));
-                        }
-                    });
-                });
-            };
-
-            const periodResults = await getPeriodChoice();
-            startDate = periodResults.start;
-            endDate = periodResults.end;
-            finalInteraction = periodResults.lastInteract;
 
             // Mulai Eksekusi Pipeline
             isWeeklyJobRunning = true;
@@ -740,18 +840,12 @@ module.exports = {
             let currentPlatform = platform.toUpperCase();
             let currentMerchant = 'Menunggu...';
 
-            const makeProgressBar = (filledCount, totalCount = 5) => {
-                const filled = '█'.repeat(filledCount);
-                const empty = '░'.repeat(totalCount - filledCount);
-                return `[${filled}${empty}] ${filledCount}/${totalCount}`;
-            };
-
             const buildProgressEmbed = (progressStep = 1, extraDesc = '') => {
                 let progressLabel = '';
                 switch (progressStep) {
-                    case 1: progressLabel = '⚙️ Initial setup & validation'; break;
+                    case 1: progressLabel = 'Starting '; break;
                     case 2: progressLabel = '⏸️ Pausing warmer & acquiring lock'; break;
-                    case 3: progressLabel = `⚡ Running weekly scraper [${currentPlatform}] (${currentMerchant})`; break;
+                    case 3: progressLabel = `Running weekly scraper [${currentPlatform}] (${currentMerchant})`; break;
                     case 4: progressLabel = '📦 Generating and merging Excel reports'; break;
                     case 5: progressLabel = '✅ Completed'; break;
                 }
@@ -761,7 +855,6 @@ module.exports = {
                     .setTitle('📊 Weekly VB')
                     .setDescription(
                         `Weekly VB pipeline sedang dijalankan.\n\n` +
-                        `${makeProgressBar(progressStep)}\n` +
                         `> 🏢 **Tipe:** ${target.toUpperCase()}\n` +
                         `> 📍 **Platform:** ${platform.toUpperCase()}\n` +
                         `> 📅 **Rentang:** ${startDate} s/d ${endDate}\n` +
@@ -777,7 +870,7 @@ module.exports = {
             const cancelRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('cancel_weekly_pipeline')
-                    .setLabel('⏹️ Batalkan Proses')
+                    .setLabel('Batalkan Proses')
                     .setStyle(ButtonStyle.Danger)
             );
 
@@ -830,20 +923,20 @@ module.exports = {
                     // Parse merchant
                     let match = line.match(/Starting for:\s*[^\s(]+\s*\(([^)]+)\)/i);
                     if (match && currentMerchant !== match[1].trim()) { currentMerchant = match[1].trim(); stateChanged = true; }
-                    
+
                     let matchRetry = line.match(/Re-running sequentially for:\s*(.*)/i);
                     if (matchRetry && currentMerchant !== matchRetry[1].trim()) { currentMerchant = matchRetry[1].trim(); stateChanged = true; }
-                    
+
                     let matchPortal = line.match(/✓\s*\[PORTAL\s*\d+\]\s*([^-—]+)/i);
                     if (matchPortal && currentMerchant !== matchPortal[1].trim()) { currentMerchant = matchPortal[1].trim(); stateChanged = true; }
-                    
+
                     let matchShopee = line.match(/Processing:\s*(.*)/i);
                     if (matchShopee && currentMerchant !== matchShopee[1].trim()) { currentMerchant = matchShopee[1].trim(); stateChanged = true; }
-                    
+
                     let matchPoll = line.match(/downloading report for\s*([^.]+)/i);
                     if (matchPoll && currentMerchant !== matchPoll[1].trim()) { currentMerchant = matchPoll[1].trim(); stateChanged = true; }
                 }
-                
+
                 const now = Date.now();
                 if (stateChanged || (now - lastUpdate > 3000)) {
                     if (now - lastUpdate > 1500) {
@@ -875,7 +968,7 @@ module.exports = {
                     const uploadedFiles = [];
                     let uploadedFolderUrl = null;
                     const searchPaths = platform === 'all' ? ['grab', 'shopee'] : [platform];
-                    
+
                     for (const plat of searchPaths) {
                         const dir = path.join(WEEKLY_DIR, 'laporan', `${plat}_vb`, `${startDate}_to_${endDate}`);
                         if (fs.existsSync(dir)) {
@@ -884,14 +977,14 @@ module.exports = {
                                 if (file.endsWith('.xlsx')) {
                                     const filePath = path.join(dir, file);
                                     const stats = fs.statSync(filePath);
-                                    
+
                                     // Hanya upload file yang dibuat/dimodifikasi selama pipeline ini berjalan
                                     if (stats.mtimeMs >= startTime) {
                                         if (APPS_SCRIPT_DRIVE_URL && APPS_SCRIPT_DRIVE_URL !== "ISI_DENGAN_URL_WEB_APP_APPS_SCRIPT_ANDA") {
                                             try {
                                                 const fileContent = fs.readFileSync(filePath);
                                                 const base64Content = fileContent.toString('base64');
-                                                
+
                                                 console.log(`[DRIVE UPLOAD] Uploading ${file}...`);
                                                 const driveRes = await uploadToDrive(APPS_SCRIPT_DRIVE_URL, {
                                                     folderId: "1AF7zvgT0fuMTzTrXV_FKwUWj1R7JeOcx",
@@ -929,7 +1022,7 @@ module.exports = {
                     } else if (uploadedFiles.length > 0) {
                         const folderLink = uploadedFolderUrl || "https://drive.google.com/";
                         driveStatus = `📂 **Google Drive Folder:** [Buka Folder Rentang Tanggal](${folderLink})\n` +
-                                      `*Berhasil mengunggah ${uploadedFiles.length} file (Master + Rincian).*`;
+                            `*Berhasil mengunggah ${uploadedFiles.length} file (Master + Rincian).*`;
                     } else {
                         driveStatus = '❌ *Gagal mengunggah file laporan ke Google Drive.*';
                     }
@@ -960,7 +1053,7 @@ module.exports = {
                             content: `Berhasil menyelesaikan pipeline VB untuk **${platform.toUpperCase()}**!`,
                             embeds: [successEmbed],
                             files: attachments
-                        }).catch(() => {});
+                        }).catch(() => { });
                     }
                 } else {
                     const errSnippet = result.output.slice(-600)
@@ -988,13 +1081,13 @@ module.exports = {
                         await interaction.channel.send({
                             content: `Pipeline VB **${platform.toUpperCase()}** gagal!`,
                             embeds: [failedEmbed]
-                        }).catch(() => {});
+                        }).catch(() => { });
                     }
                 }
             }).catch(async (err) => {
                 isWeeklyJobRunning = false;
                 activeWeeklyProcess = null;
-                
+
                 const errorEmbed = new EmbedBuilder()
                     .setColor(0xFF0000)
                     .setTitle('❌ Error Tidak Terduga')
@@ -1010,7 +1103,7 @@ module.exports = {
                     await interaction.channel.send({
                         content: `Pipeline VB **${platform.toUpperCase()}** mengalami error sistem!`,
                         embeds: [errorEmbed]
-                    }).catch(() => {});
+                    }).catch(() => { });
                 }
             });
 
