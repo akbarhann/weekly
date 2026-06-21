@@ -35,10 +35,12 @@ const APPS_SCRIPT_DRIVE_URL = "https://script.google.com/macros/s/AKfycby0FNviji
 let isWeeklyJobRunning = false;
 let activeWeeklyProcess = null;
 
-// GSheets caching specifically for weekly merchants (gid=0)
-let cachedWeeklySheetData = null;
-let lastWeeklyCacheTime = 0;
-const WEEKLY_CACHE_DURATION = 30 * 1000; // 30 seconds cache
+// GSheets caching specifically for VB merchants
+let cachedVBGrabData = null;
+let cachedVBShopeeData = null;
+let lastVBGrabCacheTime = 0;
+let lastVBShopeeCacheTime = 0;
+const VB_CACHE_DURATION = 30 * 1000; // 30 seconds cache
 
 function fetchCSV(url) {
     return new Promise((resolve, reject) => {
@@ -75,10 +77,8 @@ function uploadToDrive(url, payload) {
         };
         
         const req = https.request(options, (res) => {
-            // Google Apps Script redirects with 302 Found
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 const redirectUrl = res.headers.location;
-                // Follow the redirect using a GET request
                 https.get(redirectUrl, (redirectRes) => {
                     let data = '';
                     redirectRes.on('data', (chunk) => data += chunk);
@@ -112,57 +112,88 @@ function uploadToDrive(url, payload) {
     });
 }
 
-async function getWeeklyOutlets(platform) {
+async function getVBOutlets(platform) {
     const now = Date.now();
-    let csvData;
-    if (cachedWeeklySheetData && (now - lastWeeklyCacheTime < WEEKLY_CACHE_DURATION)) {
-        csvData = cachedWeeklySheetData;
-    } else {
-        const url = 'https://docs.google.com/spreadsheets/d/14eCb8DAEXhmbYj9MFj2KzC7AhkulbCbSNPltN2m-go0/export?format=csv&gid=0';
-        csvData = await fetchCSV(url);
-        cachedWeeklySheetData = csvData;
-        lastWeeklyCacheTime = now;
-    }
+    const grabUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRYSUnKOqk29LCktTxdb0wPLbWMbRaWRP3eC_UA4AwYod1FW6zDMhtLMC5ghIvot2B8upCDfBsn-TCP/pub?gid=978201567&single=true&output=csv';
+    const shopeeUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRYSUnKOqk29LCktTxdb0wPLbWMbRaWRP3eC_UA4AwYod1FW6zDMhtLMC5ghIvot2B8upCDfBsn-TCP/pub?gid=565510790&single=true&output=csv';
 
-    const lines = csvData.split(/\r?\n/);
-    if (lines.length < 2) return [];
+    let grabCsv = '';
+    let shopeeCsv = '';
 
-    const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.trim().replace(/^"|"$/g, ''));
-    const appIdx = headers.indexOf('Aplikasi');
-    const statusIdx = headers.indexOf('Status');
-    const nameIdx = headers.indexOf('Nama Outlet');
-
-    if (appIdx === -1 || statusIdx === -1 || nameIdx === -1) {
-        console.error('[WEEKLY FETCH] Headers not found in GSheets gid=0:', headers);
-        return [];
-    }
-
-    const outletsSet = new Set();
-
-    for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        const cols = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/^"|"$/g, '').trim());
-        if (cols.length <= Math.max(appIdx, statusIdx, nameIdx)) continue;
-
-        const app = cols[appIdx].toLowerCase();
-        const status = cols[statusIdx].toLowerCase();
-        const name = cols[nameIdx];
-
-        if (!name || name === '-') continue;
-        if (status !== 'live') continue;
-
-        const matchesPlatform = 
-            (platform === 'all' && (app.includes('grab') || app.includes('shopee'))) ||
-            (platform === 'grab' && app.includes('grab')) ||
-            (platform === 'shopee' && app.includes('shopee'));
-
-        if (matchesPlatform) {
-            outletsSet.add(name);
+    if (platform === 'grab' || platform === 'all') {
+        if (cachedVBGrabData && (now - lastVBGrabCacheTime < VB_CACHE_DURATION)) {
+            grabCsv = cachedVBGrabData;
+        } else {
+            grabCsv = await fetchCSV(grabUrl);
+            cachedVBGrabData = grabCsv;
+            lastVBGrabCacheTime = now;
         }
     }
 
-    return Array.from(outletsSet).sort((a, b) => a.localeCompare(b));
+    if (platform === 'shopee' || platform === 'all') {
+        if (cachedVBShopeeData && (now - lastVBShopeeCacheTime < VB_CACHE_DURATION)) {
+            shopeeCsv = cachedVBShopeeData;
+        } else {
+            shopeeCsv = await fetchCSV(shopeeUrl);
+            cachedVBShopeeData = shopeeCsv;
+            lastVBShopeeCacheTime = now;
+        }
+    }
+
+    const parsePortalNames = (csvString, targetNotesFilter = true, roleFilter = false) => {
+        if (!csvString) return [];
+        const lines = csvString.split(/\r?\n/);
+        if (lines.length < 2) return [];
+
+        const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.trim().replace(/^"|"$/g, ''));
+        const portalIdx = headers.indexOf('Portal');
+        const notesIdx = headers.indexOf('Notes');
+        const roleIdx = headers.indexOf('Role');
+
+        if (portalIdx === -1) {
+            console.error('[VB FETCH] Column "Portal" not found in headers:', headers);
+            return [];
+        }
+
+        const names = [];
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const cols = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/^"|"$/g, '').trim());
+            if (cols.length <= portalIdx) continue;
+
+            const name = cols[portalIdx];
+            if (!name || name === '-') continue;
+
+            // Notes filter: exclude if notes contains "restricted"
+            if (targetNotesFilter && notesIdx !== -1 && cols.length > notesIdx) {
+                const notes = cols[notesIdx].toLowerCase();
+                if (notes.includes('restricted')) continue;
+            }
+
+            // Role filter: for Shopee, must be "owner"
+            if (roleFilter && roleIdx !== -1 && cols.length > roleIdx) {
+                const role = cols[roleIdx].toLowerCase().trim();
+                if (role !== 'owner') continue;
+            }
+
+            names.push(name);
+        }
+        return names;
+    };
+
+    let grabPortals = [];
+    if (platform === 'grab' || platform === 'all') {
+        grabPortals = parsePortalNames(grabCsv, true, false);
+    }
+
+    let shopeePortals = [];
+    if (platform === 'shopee' || platform === 'all') {
+        shopeePortals = parsePortalNames(shopeeCsv, true, true);
+    }
+
+    const allPortals = new Set([...grabPortals, ...shopeePortals]);
+    return Array.from(allPortals).sort((a, b) => a.localeCompare(b));
 }
 
 // Progress steps helper
@@ -198,10 +229,10 @@ const makeProgressEmbed = (currentStepName, title, description, fields = [], has
     }
 
     const embed = new EmbedBuilder()
-        .setColor(0x5865F2)
+        .setColor(0x00D0F2)
         .setTitle(title)
         .setDescription(`**Langkah Progres:**\n${progressStr}\n\n${description}`)
-        .setFooter({ text: 'Sistem Weekly Agency Performance' })
+        .setFooter({ text: 'Sistem Weekly VB Performance' })
         .setTimestamp();
 
     if (fields && fields.length > 0) {
@@ -227,7 +258,7 @@ async function askSelection(interaction, { stepName, title, placeholder, options
             const currentMax = Math.min(maxValues, chunk.length);
 
             const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId(`agency_selection_menu_${index}`)
+                .setCustomId(`vb_selection_menu_${index}`)
                 .setPlaceholder(placeholder + (safeChunks.length > 1 ? ` (Bagian ${index + 1})` : ''))
                 .setMinValues(0)
                 .setMaxValues(currentMax)
@@ -242,7 +273,7 @@ async function askSelection(interaction, { stepName, title, placeholder, options
         const isDisabled = selectedValues.size < minValues;
 
         const nextButton = new ButtonBuilder()
-            .setCustomId('agency_continue_btn')
+            .setCustomId('vb_continue_btn')
             .setLabel(selectedValues.size >= minValues ? '➡️ Lanjutkan' : (minValues === 1 ? 'Pilih opsi terlebih dahulu' : `Pilih minimal ${minValues} opsi`))
             .setStyle(selectedValues.size >= minValues ? ButtonStyle.Success : ButtonStyle.Secondary)
             .setDisabled(isDisabled);
@@ -293,7 +324,7 @@ async function askSelection(interaction, { stepName, title, placeholder, options
 
         collector.on('collect', async i => {
             latestInteraction = i;
-            if (i.customId.startsWith('agency_selection_menu')) {
+            if (i.customId.startsWith('vb_selection_menu')) {
                 const menuIndex = parseInt(i.customId.split('_').pop());
                 const currentChunk = options.slice(menuIndex * 25, (menuIndex + 1) * 25);
 
@@ -304,7 +335,7 @@ async function askSelection(interaction, { stepName, title, placeholder, options
                     embeds: [getEmbed()],
                     components: getComponents()
                 });
-            } else if (i.customId === 'agency_continue_btn') {
+            } else if (i.customId === 'vb_continue_btn') {
                 collector.stop('confirmed');
             }
         });
@@ -344,13 +375,13 @@ const toISOFormat = (d) => {
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('agency')
-        .setDescription('Kirim formulir Laporan Transaksi Mingguan (Weekly) Agency'),
+        .setName('vb')
+        .setDescription('Kirim formulir Laporan Transaksi Mingguan (Weekly) VB'),
 
     async execute(interaction) {
         if (isWeeklyJobRunning) {
             return interaction.reply({
-                content: '⚠️ **Sistem Sibuk!** Laporan Weekly Agency lain sedang berjalan. Harap tunggu hingga proses sebelumnya selesai.',
+                content: '⚠️ **Sistem Sibuk!** Laporan Weekly VB lain sedang berjalan. Harap tunggu hingga proses sebelumnya selesai.',
                 flags: 64
             });
         }
@@ -359,13 +390,13 @@ module.exports = {
 
         // Pre-fetch weekly sheet data
         try {
-            await getWeeklyOutlets('all');
+            await getVBOutlets('all');
         } catch (err) {
-            console.error('[WEEKLY FETCH] Gagal pre-fetch data sheet:', err);
+            console.error('[VB FETCH] Gagal pre-fetch data sheet:', err);
         }
 
         try {
-            const target = 'agency';
+            const target = 'VB';
             const WEEKLY_DIR = getWeeklyTargetDir(target);
 
             // STEP 1: Pilih Aplikator
@@ -381,7 +412,7 @@ module.exports = {
                 minValues: 1,
                 maxValues: 1,
                 fields: [
-                    { name: 'Tipe', value: 'AGENCY', inline: true }
+                    { name: 'Tipe', value: 'VB', inline: true }
                 ],
                 isFirstStep: true,
                 hasOutletStep: true,
@@ -402,7 +433,7 @@ module.exports = {
                 minValues: 1,
                 maxValues: 1,
                 fields: [
-                    { name: 'Tipe', value: 'AGENCY', inline: true },
+                    { name: 'Tipe', value: 'VB', inline: true },
                     { name: 'Platform', value: platform.toUpperCase(), inline: true }
                 ],
                 hasOutletStep: true,
@@ -419,7 +450,7 @@ module.exports = {
             if (hasOutletStep) {
                 if (platform === 'all') {
                     // STEP 3a: Pilih Outlet Grab
-                    const grabOutlets = await getWeeklyOutlets('grab');
+                    const grabOutlets = await getVBOutlets('grab');
                     if (grabOutlets.length === 0) {
                         return lastInteractionAfterOutlet.reply({
                             content: '❌ Gagal memuat daftar outlet Grab live.',
@@ -433,13 +464,13 @@ module.exports = {
 
                     const grabResult = await askSelection(scopeResult.lastInteraction, {
                         stepName: 'Outlet Grab',
-                        title: '🏪 Pilih Outlet Grab',
+                        title: '🏪 Pilih Outlet Grab VB',
                         placeholder: 'Pilih satu atau lebih outlet Grab...',
                         options: grabOptions,
                         minValues: 1,
                         maxValues: grabOptions.length,
                         fields: [
-                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Tipe', value: 'VB', inline: true },
                             { name: 'Platform', value: 'ALL (Grab)', inline: true },
                             { name: 'Cakupan', value: 'Merchant Terpilih', inline: true }
                         ],
@@ -451,7 +482,7 @@ module.exports = {
                     lastInteractionAfterOutlet = grabResult.lastInteraction;
 
                     // STEP 3b: Pilih Outlet Shopee
-                    const shopeeOutlets = await getWeeklyOutlets('shopee');
+                    const shopeeOutlets = await getVBOutlets('shopee');
                     if (shopeeOutlets.length === 0) {
                         return lastInteractionAfterOutlet.reply({
                             content: '❌ Gagal memuat daftar outlet Shopee live.',
@@ -465,13 +496,13 @@ module.exports = {
 
                     const shopeeResult = await askSelection(lastInteractionAfterOutlet, {
                         stepName: 'Outlet Shopee',
-                        title: '🏪 Pilih Outlet Shopee',
+                        title: '🏪 Pilih Outlet Shopee VB',
                         placeholder: 'Pilih satu atau lebih outlet Shopee...',
                         options: shopeeOptions,
                         minValues: 1,
                         maxValues: shopeeOptions.length,
                         fields: [
-                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Tipe', value: 'VB', inline: true },
                             { name: 'Platform', value: 'ALL (Shopee)', inline: true },
                             { name: 'Cakupan', value: 'Merchant Terpilih', inline: true },
                             { name: 'Outlet Grab Terpilih', value: grabResult.values.length.toString(), inline: true }
@@ -484,7 +515,7 @@ module.exports = {
                     lastInteractionAfterOutlet = shopeeResult.lastInteraction;
 
                 } else {
-                    const weeklyOutlets = await getWeeklyOutlets(platform);
+                    const weeklyOutlets = await getVBOutlets(platform);
                     if (weeklyOutlets.length === 0) {
                         return lastInteractionAfterOutlet.reply({
                             content: '❌ Gagal memuat daftar outlet live untuk platform terpilih.',
@@ -498,13 +529,13 @@ module.exports = {
 
                     const outletResult = await askSelection(scopeResult.lastInteraction, {
                         stepName: 'Outlet',
-                        title: '🏪 Pilih Outlet',
+                        title: '🏪 Pilih Outlet VB',
                         placeholder: 'Pilih satu atau lebih outlet...',
                         options: outletOptions,
                         minValues: 1,
                         maxValues: outletOptions.length,
                         fields: [
-                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Tipe', value: 'VB', inline: true },
                             { name: 'Platform', value: platform.toUpperCase(), inline: true },
                             { name: 'Cakupan', value: 'Merchant Terpilih', inline: true }
                         ],
@@ -540,7 +571,7 @@ module.exports = {
             const defaultEndISO = toISOFormat(lastSunday);
 
             const currentFields = [
-                { name: 'Tipe', value: 'AGENCY', inline: true },
+                { name: 'Tipe', value: 'VB', inline: true },
                 { name: 'Platform', value: platform.toUpperCase(), inline: true },
                 { name: 'Cakupan', value: hasOutletStep ? `Merchant Terpilih (${selectedOutlets.length})` : 'Semua Outlet', inline: true }
             ];
@@ -562,11 +593,11 @@ module.exports = {
                 return [
                     new ActionRowBuilder().addComponents(
                         new ButtonBuilder()
-                            .setCustomId('agency_shortcut_7_days_btn')
+                            .setCustomId('vb_shortcut_7_days_btn')
                             .setLabel(`📅 7 Hari Penuh (${defaultStartDisp} s/d ${defaultEndDisp})`)
                             .setStyle(ButtonStyle.Success),
                         new ButtonBuilder()
-                            .setCustomId('agency_open_date_modal_btn')
+                            .setCustomId('vb_open_date_modal_btn')
                             .setLabel('⚙️ Custom Date Range')
                             .setStyle(ButtonStyle.Secondary)
                     )
@@ -584,12 +615,12 @@ module.exports = {
             const getPeriodChoice = () => {
                 return new Promise((resolvePeriod, rejectPeriod) => {
                     const collector = periodMsg.createMessageComponentCollector({
-                        filter: i => i.user.id === interaction.user.id && ['agency_shortcut_7_days_btn', 'agency_open_date_modal_btn'].includes(i.customId),
+                        filter: i => i.user.id === interaction.user.id && ['vb_shortcut_7_days_btn', 'vb_open_date_modal_btn'].includes(i.customId),
                         time: 300000
                     });
 
                     collector.on('collect', async i => {
-                        if (i.customId === 'agency_shortcut_7_days_btn') {
+                        if (i.customId === 'vb_shortcut_7_days_btn') {
                             collector.stop('confirmed');
                             resolvePeriod({
                                 start: defaultStartISO,
@@ -600,7 +631,7 @@ module.exports = {
                         }
 
                         // Jika klik custom date, tampilkan modal
-                        const modalId = `agency_date_modal_${Date.now()}`;
+                        const modalId = `vb_date_modal_${Date.now()}`;
                         const dateModal = new ModalBuilder()
                             .setCustomId(modalId)
                             .setTitle('Rentang Tanggal Custom');
@@ -697,13 +728,13 @@ module.exports = {
             // Mulai Eksekusi Pipeline
             isWeeklyJobRunning = true;
             await finalInteraction.update({
-                content: '⏳ **Menyiapkan penarikan data weekly...**',
+                content: '⏳ **Menyiapkan penarikan data weekly VB...**',
                 embeds: [],
                 components: []
             });
 
             const startTime = Date.now();
-            let currentLog = 'Memulai pipeline weekly...';
+            let currentLog = 'Memulai pipeline weekly VB...';
             let lastUpdate = Date.now();
 
             const makeProgressBar = (filledCount, totalCount = 5) => {
@@ -723,10 +754,10 @@ module.exports = {
                 }
 
                 return new EmbedBuilder()
-                    .setColor(0x5865F2)
-                    .setTitle('📊 Progress Weekly Agency Pipeline')
+                    .setColor(0x00D0F2)
+                    .setTitle('📊 Progress Weekly VB Pipeline')
                     .setDescription(
-                        `Weekly pipeline sedang dijalankan.\n\n` +
+                        `Weekly VB pipeline sedang dijalankan.\n\n` +
                         `${makeProgressBar(progressStep)}\n` +
                         `> 🏢 **Tipe:** ${target.toUpperCase()}\n` +
                         `> 📍 **Platform:** ${platform.toUpperCase()}\n` +
@@ -735,7 +766,7 @@ module.exports = {
                         `**Status saat ini:** ${progressLabel}\n` +
                         `\`\`\`\n${extraDesc || currentLog}\n\`\`\``
                     )
-                    .setFooter({ text: 'Sistem Weekly Agency Performance' })
+                    .setFooter({ text: 'Sistem Weekly VB Performance' })
                     .setTimestamp();
             };
 
@@ -810,9 +841,8 @@ module.exports = {
                     const uploadedFiles = [];
                     const searchPaths = platform === 'all' ? ['grab', 'shopee'] : [platform];
                     
-                    // Update: uploading files to Google Drive
                     for (const plat of searchPaths) {
-                        const dir = path.join(WEEKLY_DIR, 'laporan', plat, `${startDate}_to_${endDate}`);
+                        const dir = path.join(WEEKLY_DIR, 'laporan', `${plat}_vb`, `${startDate}_to_${endDate}`);
                         if (fs.existsSync(dir)) {
                             const dirFiles = fs.readdirSync(dir);
                             for (const file of dirFiles) {
@@ -820,12 +850,10 @@ module.exports = {
                                     const filePath = path.join(dir, file);
                                     const stats = fs.statSync(filePath);
                                     
-                                    // Add to attachments for Discord (if < 8MB)
                                     if (stats.size < 8 * 1024 * 1024) {
                                         attachments.push(new AttachmentBuilder(filePath));
                                     }
 
-                                    // Upload to Google Drive
                                     if (APPS_SCRIPT_DRIVE_URL && APPS_SCRIPT_DRIVE_URL !== "ISI_DENGAN_URL_WEB_APP_APPS_SCRIPT_ANDA") {
                                         try {
                                             const fileContent = fs.readFileSync(filePath);
@@ -834,7 +862,7 @@ module.exports = {
                                             console.log(`[DRIVE UPLOAD] Uploading ${file}...`);
                                             const driveRes = await uploadToDrive(APPS_SCRIPT_DRIVE_URL, {
                                                 folderId: "1AF7zvgT0fuMTzTrXV_FKwUWj1R7JeOcx",
-                                                platform: plat.toUpperCase(), // e.g. GRAB or SHOPEE
+                                                platform: `${plat.toUpperCase()}_VB`, // e.g. GRAB_VB or SHOPEE_VB
                                                 dateRange: `${startDate}_to_${endDate}`,
                                                 filename: file,
                                                 content: base64Content
@@ -860,7 +888,7 @@ module.exports = {
 
                     let driveStatus = '';
                     if (APPS_SCRIPT_DRIVE_URL === "ISI_DENGAN_URL_WEB_APP_APPS_SCRIPT_ANDA") {
-                        driveStatus = '⚠️ *Upload Google Drive belum dikonfigurasi (URL Apps Script belum diisi di kode).*';
+                        driveStatus = '⚠️ *Upload Google Drive belum dikonfigurasi.*';
                     } else if (uploadedFiles.length > 0) {
                         driveStatus = '📂 **Google Drive Uploads:**\n' + 
                             uploadedFiles.map(f => `• [${f.name}](${f.url})`).join('\n');
@@ -870,9 +898,9 @@ module.exports = {
 
                     const successEmbed = new EmbedBuilder()
                         .setColor(0x00C853)
-                        .setTitle('✅ Weekly Pipeline Selesai!')
+                        .setTitle('✅ Weekly VB Pipeline Selesai!')
                         .setDescription(
-                            `Pipeline weekly selesai dijalankan dengan sukses.\n\n` +
+                            `Pipeline weekly VB selesai dijalankan dengan sukses.\n\n` +
                             `> 🏢 **Tipe:** ${target.toUpperCase()}\n` +
                             `> 📍 **Platform:** ${platform.toUpperCase()}\n` +
                             `> 📅 **Rentang:** ${startDate} s/d ${endDate}\n` +
@@ -880,7 +908,7 @@ module.exports = {
                             `> ⏱️ **Durasi:** ${durationStr}\n\n` +
                             `${driveStatus}`
                         )
-                        .setFooter({ text: 'Sistem Weekly Agency Performance' })
+                        .setFooter({ text: 'Sistem Weekly VB Performance' })
                         .setTimestamp();
 
                     await progressMsg.edit({
@@ -895,9 +923,9 @@ module.exports = {
 
                     const failedEmbed = new EmbedBuilder()
                         .setColor(0xFF0000)
-                        .setTitle('❌ Weekly Agency Pipeline Gagal')
+                        .setTitle('❌ Weekly VB Pipeline Gagal')
                         .setDescription(
-                            `Weekly pipeline gagal dijalankan.\n\n` +
+                            `Weekly VB pipeline gagal dijalankan.\n\n` +
                             `**Exit Code:** \`${result.exitCode}\`\n` +
                             `**Log terakhir:**\n` +
                             `\`\`\`\n${errSnippet || 'Tidak ada detail error.'}\n\`\`\``
@@ -929,7 +957,7 @@ module.exports = {
         } catch (err) {
             isWeeklyJobRunning = false;
             activeWeeklyProcess = null;
-            console.error('Error during agency flow:', err);
+            console.error('Error during VB flow:', err);
             if (err.message !== 'Timeout or cancelled' && err.message !== 'Timeout atau dibatalkan') {
                 await interaction.followUp({
                     content: `❌ **Terjadi kesalahan:** ${err.message}`,
@@ -951,7 +979,7 @@ module.exports = {
             isWeeklyJobRunning = false;
 
             await interaction.update({
-                content: '⏹️ **Proses Weekly Pipeline dibatalkan secara paksa.**',
+                content: '⏹️ **Proses Weekly VB Pipeline dibatalkan secara paksa.**',
                 embeds: [],
                 components: []
             });

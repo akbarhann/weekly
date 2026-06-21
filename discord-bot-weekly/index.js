@@ -61,9 +61,14 @@ client.on('interactionCreate', async interaction => {
     // Jika interaksi adalah Button
     else if (interaction.isButton()) {
         if (interaction.customId === 'cancel_weekly_pipeline') {
-            const command = client.commands.get('agency');
-            if (command && command.cancelWeeklyPipeline) {
-                await command.cancelWeeklyPipeline(interaction);
+            const agencyCmd = client.commands.get('agency');
+            const vbCmd = client.commands.get('vb');
+            let cancelled = false;
+            if (agencyCmd && agencyCmd.cancelWeeklyPipeline) {
+                cancelled = await agencyCmd.cancelWeeklyPipeline(interaction);
+            }
+            if (!cancelled && vbCmd && vbCmd.cancelWeeklyPipeline) {
+                cancelled = await vbCmd.cancelWeeklyPipeline(interaction);
             }
         }
     }

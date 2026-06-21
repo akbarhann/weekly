@@ -38,6 +38,7 @@ shopee/sessions/
 grab/sessions/
 
 # Specific ignores for agency and VB folders to avoid pushing large local chrome profiles
+agency/data/chrome_profile/
 agency/data/chrome_profile_*
 agency/data/*_cache.csv
 
