@@ -52,6 +52,50 @@ data/chrome_profile/**/Singleton*
 data/chrome_profile/**/lockfile
 data/chrome_profile/**/DevToolsActivePort
 
+# Extra Chrome profile bloat ignores
+data/chrome_profile/**/GrShaderCache/
+data/chrome_profile/**/GraphiteDawnCache/
+data/chrome_profile/**/ShaderCache/
+data/chrome_profile/**/DawnGraphiteCache/
+data/chrome_profile/**/DawnWebGPUCache/
+data/chrome_profile/**/AutofillAiModelCache/
+data/chrome_profile/**/component_crx_cache/
+data/chrome_profile/**/extensions_crx_cache/
+data/chrome_profile/**/optimization_guide_hint_cache_store/
+data/chrome_profile/**/segmentation_platform/
+data/chrome_profile/**/first_party_sets.db*
+data/chrome_profile/**/BrowserMetrics-spare.pma
+data/chrome_profile/**/LOCK
+data/chrome_profile/**/LOG
+data/chrome_profile/**/LOG.old
+data/chrome_profile/**/crl-set
+data/chrome_profile/**/keys.json
+data/chrome_profile/**/manifest.json
+data/chrome_profile/**/LICENSE*
+data/chrome_profile/**/verified_contents.json
+data/chrome_profile/**/en-US-10-1.bdic
+data/chrome_profile/**/WidevineCdm/
+data/chrome_profile/**/AutofillStrikeDatabase/
+data/chrome_profile/**/BudgetDatabase/
+data/chrome_profile/**/ClientCertificates/
+data/chrome_profile/**/Download Service/
+data/chrome_profile/**/Feature Engagement Tracker/
+data/chrome_profile/**/TrustTokenKeyCommitments/
+data/chrome_profile/**/OptimizationHints/
+data/chrome_profile/**/CertificateRevocation/
+data/chrome_profile/**/Subresource Filter/
+data/chrome_profile/**/History*
+data/chrome_profile/**/Favicons*
+data/chrome_profile/**/DIPS*
+data/chrome_profile/**/BrowsingTopicsState*
+data/chrome_profile/**/Reporting and NEL*
+data/chrome_profile/**/Network Action Predictor*
+data/chrome_profile/**/Network Persistent State*
+data/chrome_profile/**/TransportSecurity
+data/chrome_profile/**/Variations
+data/chrome_profile/**/First Run
+data/chrome_profile/**/Last Version
+
 # Ignore win profiles
 data/chrome_profile_win/
 data/chrome_profile_win_backup/
