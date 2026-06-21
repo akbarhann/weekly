@@ -801,64 +801,64 @@ module.exports = {
                 channelId: interaction.channelId
             };
 
+            let currentStep = 1;
             let logHistory = [];
             const pipeline = runWeeklyPipeline(formData, async (logLine) => {
                 const cleanLines = logLine.split('\n').map(l => l.trim()).filter(Boolean);
+                let stateChanged = false;
+
                 for (const line of cleanLines) {
                     logHistory.push(line);
 
+                    if (line.includes('[JOB LOCK]') || line.includes('[WARMER]')) {
+                        if (currentStep < 2) { currentStep = 2; stateChanged = true; }
+                    } else if (line.includes('Menjalankan:') || line.includes('PHASE 1') || line.includes('Starting for:') || line.includes('Processing:')) {
+                        if (currentStep < 3) { currentStep = 3; stateChanged = true; }
+                    } else if (line.includes('PHASE 3') || line.includes('PHASE 4') || line.includes('Master Aggregation') || line.includes('Merging') || line.includes('Combining')) {
+                        if (currentStep < 4) { currentStep = 4; stateChanged = true; }
+                        if (currentMerchant !== 'Merging & finishing...') {
+                            currentMerchant = 'Merging & finishing...';
+                            stateChanged = true;
+                        }
+                    }
+
                     // Parse platform
                     if (line.toUpperCase().includes('GRAB MULTI-PORTAL') || line.toUpperCase().includes('GRAB PIPELINE') || line.toUpperCase().includes('GRAB AUTO')) {
-                        currentPlatform = 'GRAB';
+                        if (currentPlatform !== 'GRAB') { currentPlatform = 'GRAB'; stateChanged = true; }
                     } else if (line.toUpperCase().includes('SHOPEE WEEKLY') || line.toUpperCase().includes('SHOPEE PIPELINE')) {
-                        currentPlatform = 'SHOPEE';
+                        if (currentPlatform !== 'SHOPEE') { currentPlatform = 'SHOPEE'; stateChanged = true; }
                     }
 
                     // Parse merchant
-                    // 1. Grab starting
                     let match = line.match(/Starting for:\s*[^\s(]+\s*\(([^)]+)\)/i);
-                    if (match) {
-                        currentMerchant = match[1].trim();
-                    }
-                    // 2. Grab retry starting
+                    if (match && currentMerchant !== match[1].trim()) { currentMerchant = match[1].trim(); stateChanged = true; }
+                    
                     let matchRetry = line.match(/Re-running sequentially for:\s*(.*)/i);
-                    if (matchRetry) {
-                        currentMerchant = matchRetry[1].trim();
-                    }
-                    // 3. Grab finished portal
+                    if (matchRetry && currentMerchant !== matchRetry[1].trim()) { currentMerchant = matchRetry[1].trim(); stateChanged = true; }
+                    
                     let matchPortal = line.match(/✓\s*\[PORTAL\s*\d+\]\s*([^-—]+)/i);
-                    if (matchPortal) {
-                        currentMerchant = matchPortal[1].trim();
-                    }
-                    // 4. Shopee starting/processing
+                    if (matchPortal && currentMerchant !== matchPortal[1].trim()) { currentMerchant = matchPortal[1].trim(); stateChanged = true; }
+                    
                     let matchShopee = line.match(/Processing:\s*(.*)/i);
-                    if (matchShopee) {
-                        currentMerchant = matchShopee[1].trim();
-                    }
-                    // 5. Shopee polling
+                    if (matchShopee && currentMerchant !== matchShopee[1].trim()) { currentMerchant = matchShopee[1].trim(); stateChanged = true; }
+                    
                     let matchPoll = line.match(/downloading report for\s*([^.]+)/i);
-                    if (matchPoll) {
-                        currentMerchant = matchPoll[1].trim();
-                    }
+                    if (matchPoll && currentMerchant !== matchPoll[1].trim()) { currentMerchant = matchPoll[1].trim(); stateChanged = true; }
                 }
+                
                 if (logHistory.length > 5) {
                     logHistory = logHistory.slice(-5);
                 }
 
-                let step = 3;
-                if (logLine.includes('[JOB LOCK]') || logLine.includes('[WARMER]')) {
-                    step = 2;
-                } else if (logLine.includes('PHASE 3') || logLine.includes('PHASE 4') || logLine.includes('Master Aggregation') || logLine.includes('Merging') || logLine.includes('Combining')) {
-                    step = 4;
-                    currentMerchant = 'Merging & finishing...';
-                }
-
-                if (Date.now() - lastUpdate > 2000) {
-                    lastUpdate = Date.now();
-                    await progressMsg.edit({
-                        embeds: [buildProgressEmbed(step, logHistory.join('\n'))],
-                        components: [cancelRow]
-                    }).catch(() => { });
+                const now = Date.now();
+                if (stateChanged || (now - lastUpdate > 3000)) {
+                    if (now - lastUpdate > 1500) {
+                        lastUpdate = now;
+                        await progressMsg.edit({
+                            embeds: [buildProgressEmbed(currentStep, logHistory.join('\n'))],
+                            components: [cancelRow]
+                        }).catch(() => { });
+                    }
                 }
             });
 
@@ -879,6 +879,7 @@ module.exports = {
                 if (result.success) {
                     const attachments = [];
                     const uploadedFiles = [];
+                    let uploadedFolderUrl = null;
                     const searchPaths = platform === 'all' ? ['grab', 'shopee'] : [platform];
                     
                     for (const plat of searchPaths) {
@@ -886,13 +887,12 @@ module.exports = {
                         if (fs.existsSync(dir)) {
                             const dirFiles = fs.readdirSync(dir);
                             for (const file of dirFiles) {
-                                if (file.endsWith('.xlsx') && (file.startsWith('0Master') || file.startsWith('CUSTOM_') || file.startsWith('Merged_'))) {
+                                if (file.endsWith('.xlsx')) {
                                     const filePath = path.join(dir, file);
                                     const stats = fs.statSync(filePath);
                                     
-                                    if (stats.size < 8 * 1024 * 1024) {
-                                        attachments.push(new AttachmentBuilder(filePath));
-                                    }
+                                    // No longer adding attachments directly to Discord per user request
+                                    // only uploading to Google Drive
 
                                     if (APPS_SCRIPT_DRIVE_URL && APPS_SCRIPT_DRIVE_URL !== "ISI_DENGAN_URL_WEB_APP_APPS_SCRIPT_ANDA") {
                                         try {
@@ -913,6 +913,9 @@ module.exports = {
                                                     name: file,
                                                     url: driveRes.url
                                                 });
+                                                if (driveRes.folderUrl) {
+                                                    uploadedFolderUrl = driveRes.folderUrl;
+                                                }
                                                 console.log(`[DRIVE UPLOAD] Successful! Url: ${driveRes.url}`);
                                             } else {
                                                 console.error(`[DRIVE UPLOAD] Failed for ${file}:`, driveRes ? driveRes.message : 'No response');
@@ -930,8 +933,9 @@ module.exports = {
                     if (APPS_SCRIPT_DRIVE_URL === "ISI_DENGAN_URL_WEB_APP_APPS_SCRIPT_ANDA") {
                         driveStatus = '⚠️ *Upload Google Drive belum dikonfigurasi.*';
                     } else if (uploadedFiles.length > 0) {
-                        driveStatus = '📂 **Google Drive Uploads:**\n' + 
-                            uploadedFiles.map(f => `• [${f.name}](${f.url})`).join('\n');
+                        const folderLink = uploadedFolderUrl || "https://drive.google.com/";
+                        driveStatus = `📂 **Google Drive Folder:** [Buka Folder Rentang Tanggal](${folderLink})\n` +
+                                      `*Berhasil mengunggah ${uploadedFiles.length} file (Master + Rincian).*`;
                     } else {
                         driveStatus = '❌ *Gagal mengunggah file laporan ke Google Drive.*';
                     }
