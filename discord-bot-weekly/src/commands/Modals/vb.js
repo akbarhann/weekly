@@ -894,6 +894,7 @@ module.exports = {
             };
 
             let currentStep = 1;
+            let fallbackMessage = null;
             const pipeline = runWeeklyPipeline(formData, async (logLine) => {
                 const cleanLines = logLine.split('\n').map(l => l.trim()).filter(Boolean);
                 let stateChanged = false;
@@ -941,10 +942,30 @@ module.exports = {
                 if (stateChanged || (now - lastUpdate > 3000)) {
                     if (now - lastUpdate > 1500) {
                         lastUpdate = now;
-                        await finalInteraction.editReply({
-                            embeds: [buildProgressEmbed(currentStep, currentLog)],
-                            components: [cancelRow]
-                        }).catch(() => { });
+                        const embed = buildProgressEmbed(currentStep, currentLog);
+                        if (fallbackMessage) {
+                            await fallbackMessage.edit({
+                                embeds: [embed],
+                                components: [cancelRow]
+                            }).catch(() => { });
+                        } else {
+                            try {
+                                await finalInteraction.editReply({
+                                    embeds: [embed],
+                                    components: [cancelRow]
+                                });
+                            } catch (err) {
+                                console.log('[DISCORD] Interaction expired. Switching to channel message fallback.');
+                                try {
+                                    fallbackMessage = await interaction.channel.send({
+                                        embeds: [embed],
+                                        components: [cancelRow]
+                                    });
+                                } catch (sendErr) {
+                                    console.error('[DISCORD] Failed to send fallback message:', sendErr);
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -1042,18 +1063,32 @@ module.exports = {
                         .setFooter({ text: 'Sistem Weekly VB Performance' })
                         .setTimestamp();
 
-                    try {
-                        await finalInteraction.editReply({
+                    if (fallbackMessage) {
+                        await fallbackMessage.edit({
                             embeds: [successEmbed],
                             files: attachments,
                             components: []
+                        }).catch(async () => {
+                            await interaction.channel.send({
+                                content: `Berhasil menyelesaikan pipeline VB untuk **${platform.toUpperCase()}**!`,
+                                embeds: [successEmbed],
+                                files: attachments
+                            }).catch(() => { });
                         });
-                    } catch (editErr) {
-                        await interaction.channel.send({
-                            content: `Berhasil menyelesaikan pipeline VB untuk **${platform.toUpperCase()}**!`,
-                            embeds: [successEmbed],
-                            files: attachments
-                        }).catch(() => { });
+                    } else {
+                        try {
+                            await finalInteraction.editReply({
+                                embeds: [successEmbed],
+                                files: attachments,
+                                components: []
+                            });
+                        } catch (editErr) {
+                            await interaction.channel.send({
+                                content: `Berhasil menyelesaikan pipeline VB untuk **${platform.toUpperCase()}**!`,
+                                embeds: [successEmbed],
+                                files: attachments
+                            }).catch(() => { });
+                        }
                     }
                 } else {
                     const errSnippet = result.output.slice(-600)
@@ -1072,16 +1107,28 @@ module.exports = {
                         .setFooter({ text: 'Hubungi administrator jika masalah berlanjut.' })
                         .setTimestamp();
 
-                    try {
-                        await finalInteraction.editReply({
+                    if (fallbackMessage) {
+                        await fallbackMessage.edit({
                             embeds: [failedEmbed],
                             components: []
+                        }).catch(async () => {
+                            await interaction.channel.send({
+                                content: `Pipeline VB **${platform.toUpperCase()}** gagal!`,
+                                embeds: [failedEmbed]
+                            }).catch(() => { });
                         });
-                    } catch (editErr) {
-                        await interaction.channel.send({
-                            content: `Pipeline VB **${platform.toUpperCase()}** gagal!`,
-                            embeds: [failedEmbed]
-                        }).catch(() => { });
+                    } else {
+                        try {
+                            await finalInteraction.editReply({
+                                embeds: [failedEmbed],
+                                components: []
+                            });
+                        } catch (editErr) {
+                            await interaction.channel.send({
+                                content: `Pipeline VB **${platform.toUpperCase()}** gagal!`,
+                                embeds: [failedEmbed]
+                            }).catch(() => { });
+                        }
                     }
                 }
             }).catch(async (err) => {
@@ -1094,16 +1141,28 @@ module.exports = {
                     .setDescription(`\`${err.message}\``)
                     .setTimestamp();
 
-                try {
-                    await finalInteraction.editReply({
+                if (fallbackMessage) {
+                    await fallbackMessage.edit({
                         embeds: [errorEmbed],
                         components: []
+                    }).catch(async () => {
+                        await interaction.channel.send({
+                            content: `Pipeline VB **${platform.toUpperCase()}** mengalami error sistem!`,
+                            embeds: [errorEmbed]
+                        }).catch(() => { });
                     });
-                } catch (editErr) {
-                    await interaction.channel.send({
-                        content: `Pipeline VB **${platform.toUpperCase()}** mengalami error sistem!`,
-                        embeds: [errorEmbed]
-                    }).catch(() => { });
+                } else {
+                    try {
+                        await finalInteraction.editReply({
+                            embeds: [errorEmbed],
+                            components: []
+                        });
+                    } catch (editErr) {
+                        await interaction.channel.send({
+                            content: `Pipeline VB **${platform.toUpperCase()}** mengalami error sistem!`,
+                            embeds: [errorEmbed]
+                        }).catch(() => { });
+                    }
                 }
             });
 
