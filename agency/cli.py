@@ -299,9 +299,9 @@ def interactive_mode():
             df_grab = df_main[
                 df_main["Aplikasi"].str.contains("Grab", na=False, case=False) & 
                 df_main["Status"].str.contains("Live", na=False, case=False) &
-                df_main["Nama Pengguna"].notna() & 
-                (df_main["Nama Pengguna"].str.strip() != "") & 
-                (df_main["Nama Pengguna"].str.strip() != "-")
+                df_main["Nama Pengguna.1"].notna() & 
+                (df_main["Nama Pengguna.1"].str.strip() != "") & 
+                (df_main["Nama Pengguna.1"].str.strip() != "-")
             ]
             if df_grab.empty:
                 print(f"  {RED}[ERROR] Tidak ada outlet Grab di Google Sheets.{RESET}")
@@ -346,9 +346,9 @@ def interactive_mode():
             df_grab = df_main[
                 df_main["Aplikasi"].str.contains("Grab", na=False, case=False) & 
                 df_main["Status"].str.contains("Live", na=False, case=False) &
-                df_main["Nama Pengguna"].notna() & 
-                (df_main["Nama Pengguna"].str.strip() != "") & 
-                (df_main["Nama Pengguna"].str.strip() != "-")
+                df_main["Nama Pengguna.1"].notna() & 
+                (df_main["Nama Pengguna.1"].str.strip() != "") & 
+                (df_main["Nama Pengguna.1"].str.strip() != "-")
             ]
             df_branch = df_grab[df_grab["Nama Outlet"] == outlet[0]]
             branch_col = "Cabang" if "Cabang" in df_branch.columns else "Brand"

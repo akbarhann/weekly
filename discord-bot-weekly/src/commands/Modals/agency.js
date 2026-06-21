@@ -131,7 +131,7 @@ async function getWeeklyOutlets(platform) {
     const appIdx = headers.indexOf('Aplikasi');
     const statusIdx = headers.indexOf('Status');
     const nameIdx = headers.indexOf('Nama Outlet');
-    const userIdx = headers.indexOf('Nama Pengguna');
+    const userIdx = headers.lastIndexOf('Nama Pengguna');
     const merchantIdx = headers.indexOf('Merchant Name');
 
     if (appIdx === -1 || statusIdx === -1 || nameIdx === -1) {
