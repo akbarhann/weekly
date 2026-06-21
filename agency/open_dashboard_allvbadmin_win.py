@@ -26,7 +26,7 @@ from selenium.webdriver.chrome.options import Options
 
 # ── Path Setup ─────────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent          # weekly/
-PROJECT_ROOT = SCRIPT_DIR.parent                        # task-weekly/
+PROJECT_ROOT = SCRIPT_DIR.parent                        # weekly/
 sys.path.insert(0, str(SCRIPT_DIR))
 
 # Patch Options.add_argument agar otomatis menggunakan profile _win di Linux

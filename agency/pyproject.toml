@@ -1,5 +1,5 @@
 [project]
-name = "task-weekly"
+name = "weekly-agency"
 version = "1.0.0"
 description = "Unified Weekly Transaction Pipeline - Grab & Shopee"
 requires-python = ">=3.12"
