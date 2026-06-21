@@ -1,11 +1,11 @@
-const { 
-    SlashCommandBuilder, 
-    ModalBuilder, 
-    TextInputBuilder, 
-    TextInputStyle, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
+const {
+    SlashCommandBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
     EmbedBuilder,
     AttachmentBuilder,
     StringSelectMenuBuilder
@@ -63,7 +63,7 @@ function uploadToDrive(url, payload) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const postData = JSON.stringify(payload);
-        
+
         const options = {
             hostname: urlObj.hostname,
             path: urlObj.pathname + urlObj.search,
@@ -73,7 +73,7 @@ function uploadToDrive(url, payload) {
                 'Content-Length': Buffer.byteLength(postData)
             }
         };
-        
+
         const req = https.request(options, (res) => {
             // Google Apps Script redirects with 302 Found
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -93,7 +93,7 @@ function uploadToDrive(url, payload) {
                 }).on('error', (err) => reject(err));
                 return;
             }
-            
+
             let data = '';
             res.on('data', (chunk) => data += chunk);
             res.on('end', () => {
@@ -105,7 +105,7 @@ function uploadToDrive(url, payload) {
                 }
             });
         });
-        
+
         req.on('error', (err) => reject(err));
         req.write(postData);
         req.end();
@@ -152,7 +152,7 @@ async function getWeeklyOutlets(platform) {
         if (!name || name === '-') continue;
         if (status !== 'live') continue;
 
-        const matchesPlatform = 
+        const matchesPlatform =
             (platform === 'all' && (app.includes('grab') || app.includes('shopee'))) ||
             (platform === 'grab' && app.includes('grab')) ||
             (platform === 'shopee' && app.includes('shopee'));
@@ -718,26 +718,25 @@ module.exports = {
             const buildProgressEmbed = (progressStep = 1, extraDesc = '') => {
                 let progressLabel = '';
                 switch (progressStep) {
-                    case 1: progressLabel = 'Initial setup & validation'; break;
-                    case 2: progressLabel = 'Pausing warmer & acquiring lock'; break;
-                    case 3: progressLabel = 'Running weekly scraper'; break;
-                    case 4: progressLabel = 'Generating and merging Excel reports'; break;
-                    case 5: progressLabel = 'Completed'; break;
+                    case 1: progressLabel = '⚙️ Initial setup & validation'; break;
+                    case 2: progressLabel = '⏸️ Pausing warmer & acquiring lock'; break;
+                    case 3: progressLabel = `⚡ Running weekly scraper [${currentPlatform}] (${currentMerchant})`; break;
+                    case 4: progressLabel = '📦 Generating and merging Excel reports'; break;
+                    case 5: progressLabel = '✅ Completed'; break;
                 }
 
                 return new EmbedBuilder()
                     .setColor(0x5865F2)
-                    .setTitle('📊 Progress Weekly Agency Pipeline')
+                    .setTitle('📊 Weekly Agency')
                     .setDescription(
                         `Weekly pipeline sedang dijalankan.\n\n` +
                         `${makeProgressBar(progressStep)}\n` +
                         `> 🏢 **Tipe:** ${target.toUpperCase()}\n` +
-                        `> 📍 **Platform CLI:** ${platform.toUpperCase()}\n` +
+                        `> 📍 **Platform:** ${platform.toUpperCase()}\n` +
                         `> 📅 **Rentang:** ${startDate} s/d ${endDate}\n` +
-                        `${selectedOutlets.length > 0 ? `> 🏪 **Outlet Target:** ${selectedOutlets.join(', ')}\n` : ''}\n` +
-                        `> 🔍 **Platform Aktif:** \`${currentPlatform}\`\n` +
-                        `> 🏪 **Proses Merchant:** \`${currentMerchant}\`\n\n` +
-                        `**Status saat ini:** ${progressLabel}\n` +
+                        `${selectedOutlets.length > 0 ? `> 🏪 **Outlet:** ${selectedOutlets.join(', ')}\n` : ''}\n` +
+                        `**Status saat ini:**\n${progressLabel}\n\n` +
+                        `**Log aktivitas terbaru:**\n` +
                         `\`\`\`\n${extraDesc || currentLog}\n\`\`\``
                     )
                     .setFooter({ text: 'Sistem Weekly Agency Performance' })
@@ -747,7 +746,7 @@ module.exports = {
             const cancelRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('cancel_weekly_pipeline')
-                    .setLabel('⏹️ Batalkan Proses')
+                    .setLabel('Batalkan Proses')
                     .setStyle(ButtonStyle.Danger)
             );
 
@@ -801,20 +800,20 @@ module.exports = {
                     // Parse merchant
                     let match = line.match(/Starting for:\s*[^\s(]+\s*\(([^)]+)\)/i);
                     if (match && currentMerchant !== match[1].trim()) { currentMerchant = match[1].trim(); stateChanged = true; }
-                    
+
                     let matchRetry = line.match(/Re-running sequentially for:\s*(.*)/i);
                     if (matchRetry && currentMerchant !== matchRetry[1].trim()) { currentMerchant = matchRetry[1].trim(); stateChanged = true; }
-                    
+
                     let matchPortal = line.match(/✓\s*\[PORTAL\s*\d+\]\s*([^-—]+)/i);
                     if (matchPortal && currentMerchant !== matchPortal[1].trim()) { currentMerchant = matchPortal[1].trim(); stateChanged = true; }
-                    
+
                     let matchShopee = line.match(/Processing:\s*(.*)/i);
                     if (matchShopee && currentMerchant !== matchShopee[1].trim()) { currentMerchant = matchShopee[1].trim(); stateChanged = true; }
-                    
+
                     let matchPoll = line.match(/downloading report for\s*([^.]+)/i);
                     if (matchPoll && currentMerchant !== matchPoll[1].trim()) { currentMerchant = matchPoll[1].trim(); stateChanged = true; }
                 }
-                
+
                 if (logHistory.length > 5) {
                     logHistory = logHistory.slice(-5);
                 }
@@ -850,7 +849,7 @@ module.exports = {
                     const uploadedFiles = [];
                     let uploadedFolderUrl = null;
                     const searchPaths = platform === 'all' ? ['grab', 'shopee'] : [platform];
-                    
+
                     // Update: uploading files to Google Drive
                     for (const plat of searchPaths) {
                         const dir = path.join(WEEKLY_DIR, 'laporan', plat, `${startDate}_to_${endDate}`);
@@ -867,7 +866,7 @@ module.exports = {
                                         try {
                                             const fileContent = fs.readFileSync(filePath);
                                             const base64Content = fileContent.toString('base64');
-                                            
+
                                             console.log(`[DRIVE UPLOAD] Uploading ${file}...`);
                                             const driveRes = await uploadToDrive(APPS_SCRIPT_DRIVE_URL, {
                                                 folderId: "1AF7zvgT0fuMTzTrXV_FKwUWj1R7JeOcx",
@@ -904,7 +903,7 @@ module.exports = {
                     } else if (uploadedFiles.length > 0) {
                         const folderLink = uploadedFolderUrl || "https://drive.google.com/";
                         driveStatus = `📂 **Google Drive Folder:** [Buka Folder Rentang Tanggal](${folderLink})\n` +
-                                      `*Berhasil mengunggah ${uploadedFiles.length} file (Master + Rincian).*`;
+                            `*Berhasil mengunggah ${uploadedFiles.length} file (Master + Rincian).*`;
                     } else {
                         driveStatus = '❌ *Gagal mengunggah file laporan ke Google Drive.*';
                     }
@@ -914,7 +913,6 @@ module.exports = {
                         .setTitle('✅ Weekly Pipeline Selesai!')
                         .setDescription(
                             `Pipeline weekly selesai dijalankan dengan sukses.\n\n` +
-                            `> 🏢 **Tipe:** ${target.toUpperCase()}\n` +
                             `> 📍 **Platform:** ${platform.toUpperCase()}\n` +
                             `> 📅 **Rentang:** ${startDate} s/d ${endDate}\n` +
                             `${selectedOutlets.length > 0 ? `> 🏪 **Outlet:** ${selectedOutlets.join(', ')}\n` : ''}` +
@@ -935,7 +933,7 @@ module.exports = {
                             content: `Berhasil menyelesaikan pipeline untuk **${platform.toUpperCase()}**!`,
                             embeds: [successEmbed],
                             files: attachments
-                        }).catch(() => {});
+                        }).catch(() => { });
                     }
                 } else {
                     const errSnippet = result.output.slice(-600)
@@ -963,13 +961,13 @@ module.exports = {
                         await interaction.channel.send({
                             content: `Pipeline **${platform.toUpperCase()}** gagal!`,
                             embeds: [failedEmbed]
-                        }).catch(() => {});
+                        }).catch(() => { });
                     }
                 }
             }).catch(async (err) => {
                 isWeeklyJobRunning = false;
                 activeWeeklyProcess = null;
-                
+
                 const errorEmbed = new EmbedBuilder()
                     .setColor(0xFF0000)
                     .setTitle('❌ Error Tidak Terduga')
@@ -985,7 +983,7 @@ module.exports = {
                     await interaction.channel.send({
                         content: `Pipeline **${platform.toUpperCase()}** mengalami error sistem!`,
                         embeds: [errorEmbed]
-                    }).catch(() => {});
+                    }).catch(() => { });
                 }
             });
 

@@ -749,26 +749,25 @@ module.exports = {
             const buildProgressEmbed = (progressStep = 1, extraDesc = '') => {
                 let progressLabel = '';
                 switch (progressStep) {
-                    case 1: progressLabel = 'Initial setup & validation'; break;
-                    case 2: progressLabel = 'Pausing warmer & acquiring lock'; break;
-                    case 3: progressLabel = 'Running weekly scraper'; break;
-                    case 4: progressLabel = 'Generating and merging Excel reports'; break;
-                    case 5: progressLabel = 'Completed'; break;
+                    case 1: progressLabel = '⚙️ Initial setup & validation'; break;
+                    case 2: progressLabel = '⏸️ Pausing warmer & acquiring lock'; break;
+                    case 3: progressLabel = `⚡ Running weekly scraper [${currentPlatform}] (${currentMerchant})`; break;
+                    case 4: progressLabel = '📦 Generating and merging Excel reports'; break;
+                    case 5: progressLabel = '✅ Completed'; break;
                 }
 
                 return new EmbedBuilder()
                     .setColor(0x00D0F2)
-                    .setTitle('📊 Progress Weekly VB Pipeline')
+                    .setTitle('📊 Weekly VB')
                     .setDescription(
                         `Weekly VB pipeline sedang dijalankan.\n\n` +
                         `${makeProgressBar(progressStep)}\n` +
                         `> 🏢 **Tipe:** ${target.toUpperCase()}\n` +
-                        `> 📍 **Platform CLI:** ${platform.toUpperCase()}\n` +
+                        `> 📍 **Platform:** ${platform.toUpperCase()}\n` +
                         `> 📅 **Rentang:** ${startDate} s/d ${endDate}\n` +
-                        `${selectedOutlets.length > 0 ? `> 🏪 **Outlet Target:** ${selectedOutlets.join(', ')}\n` : ''}\n` +
-                        `> 🔍 **Platform Aktif:** \`${currentPlatform}\`\n` +
-                        `> 🏪 **Proses Merchant:** \`${currentMerchant}\`\n\n` +
-                        `**Status saat ini:** ${progressLabel}\n` +
+                        `${selectedOutlets.length > 0 ? `> 🏪 **Outlet:** ${selectedOutlets.join(', ')}\n` : ''}\n` +
+                        `**Status saat ini:**\n${progressLabel}\n\n` +
+                        `**Log aktivitas terbaru:**\n` +
                         `\`\`\`\n${extraDesc || currentLog}\n\`\`\``
                     )
                     .setFooter({ text: 'Sistem Weekly VB Performance' })
