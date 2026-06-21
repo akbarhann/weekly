@@ -737,6 +737,9 @@ module.exports = {
             let currentLog = 'Memulai pipeline weekly VB...';
             let lastUpdate = Date.now();
 
+            let currentPlatform = platform.toUpperCase();
+            let currentMerchant = 'Menunggu...';
+
             const makeProgressBar = (filledCount, totalCount = 5) => {
                 const filled = '█'.repeat(filledCount);
                 const empty = '░'.repeat(totalCount - filledCount);
@@ -760,9 +763,11 @@ module.exports = {
                         `Weekly VB pipeline sedang dijalankan.\n\n` +
                         `${makeProgressBar(progressStep)}\n` +
                         `> 🏢 **Tipe:** ${target.toUpperCase()}\n` +
-                        `> 📍 **Platform:** ${platform.toUpperCase()}\n` +
+                        `> 📍 **Platform CLI:** ${platform.toUpperCase()}\n` +
                         `> 📅 **Rentang:** ${startDate} s/d ${endDate}\n` +
-                        `${selectedOutlets.length > 0 ? `> 🏪 **Outlet:** ${selectedOutlets.join(', ')}\n` : ''}\n` +
+                        `${selectedOutlets.length > 0 ? `> 🏪 **Outlet Target:** ${selectedOutlets.join(', ')}\n` : ''}\n` +
+                        `> 🔍 **Platform Aktif:** \`${currentPlatform}\`\n` +
+                        `> 🏪 **Proses Merchant:** \`${currentMerchant}\`\n\n` +
                         `**Status saat ini:** ${progressLabel}\n` +
                         `\`\`\`\n${extraDesc || currentLog}\n\`\`\``
                     )
@@ -801,6 +806,40 @@ module.exports = {
                 const cleanLines = logLine.split('\n').map(l => l.trim()).filter(Boolean);
                 for (const line of cleanLines) {
                     logHistory.push(line);
+
+                    // Parse platform
+                    if (line.toUpperCase().includes('GRAB MULTI-PORTAL') || line.toUpperCase().includes('GRAB PIPELINE') || line.toUpperCase().includes('GRAB AUTO')) {
+                        currentPlatform = 'GRAB';
+                    } else if (line.toUpperCase().includes('SHOPEE WEEKLY') || line.toUpperCase().includes('SHOPEE PIPELINE')) {
+                        currentPlatform = 'SHOPEE';
+                    }
+
+                    // Parse merchant
+                    // 1. Grab starting
+                    let match = line.match(/Starting for:\s*[^\s(]+\s*\(([^)]+)\)/i);
+                    if (match) {
+                        currentMerchant = match[1].trim();
+                    }
+                    // 2. Grab retry starting
+                    let matchRetry = line.match(/Re-running sequentially for:\s*(.*)/i);
+                    if (matchRetry) {
+                        currentMerchant = matchRetry[1].trim();
+                    }
+                    // 3. Grab finished portal
+                    let matchPortal = line.match(/✓\s*\[PORTAL\s*\d+\]\s*([^-—]+)/i);
+                    if (matchPortal) {
+                        currentMerchant = matchPortal[1].trim();
+                    }
+                    // 4. Shopee starting/processing
+                    let matchShopee = line.match(/Processing:\s*(.*)/i);
+                    if (matchShopee) {
+                        currentMerchant = matchShopee[1].trim();
+                    }
+                    // 5. Shopee polling
+                    let matchPoll = line.match(/downloading report for\s*([^.]+)/i);
+                    if (matchPoll) {
+                        currentMerchant = matchPoll[1].trim();
+                    }
                 }
                 if (logHistory.length > 5) {
                     logHistory = logHistory.slice(-5);
@@ -809,8 +848,9 @@ module.exports = {
                 let step = 3;
                 if (logLine.includes('[JOB LOCK]') || logLine.includes('[WARMER]')) {
                     step = 2;
-                } else if (logLine.includes('PHASE 3') || logLine.includes('PHASE 4') || logLine.includes('Master Aggregation') || logLine.includes('Merging')) {
+                } else if (logLine.includes('PHASE 3') || logLine.includes('PHASE 4') || logLine.includes('Master Aggregation') || logLine.includes('Merging') || logLine.includes('Combining')) {
                     step = 4;
+                    currentMerchant = 'Merging & finishing...';
                 }
 
                 if (Date.now() - lastUpdate > 2000) {
