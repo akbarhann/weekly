@@ -34,7 +34,7 @@ for (const folder of commandFolders) {
 }
 
 // 4. Event ketika bot berhasil menyala
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`Bot Weekly Agency online sebagai ${client.user.tag}!`);
 });
 
