@@ -26,7 +26,7 @@ def launch_portal_browser(name):
         time.sleep(2)
         
         # Load saved session cookies if they exist
-        saved = load_session(name)
+        saved = load_session()
         if saved:
             log.info(f"🔑 Memasukkan cookie sesi tersimpan untuk VB '{name}'...")
             try:

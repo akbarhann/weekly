@@ -596,6 +596,25 @@ def _trigger_and_extract_tokens(driver) -> tuple:
     except: pass
     return extract_tokens_from_driver(driver)
 
+def _kill_zombie_chrome_processes(profile_dir: Path):
+    """Kills any running Chrome/ChromeDriver processes using the specified profile directory."""
+    if os.name == "nt":
+        try:
+            import subprocess
+            abs_path = str(profile_dir.resolve())
+            ps_cmd = f"Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe' OR Name = 'chromedriver.exe'\" | Where-Object {{ $_.CommandLine -like '*{abs_path}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+            subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            log.warning(f"⚠️ Failed to kill zombie chrome processes: {e}")
+    else:
+        try:
+            import subprocess
+            abs_path = str(profile_dir.resolve())
+            cmd = f"pkill -9 -f '{abs_path}'"
+            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
 # ── Driver Initialization ──────────────────────────────────────────────────────
 
 def _init_driver(headless: bool, account_name: str = None):
@@ -625,6 +644,9 @@ def _init_driver(headless: bool, account_name: str = None):
         profile_dir = script_dir / "data" / "chrome_profiles" / acc_name
         options.add_argument(f"--user-data-dir={profile_dir.resolve()}")
         options.add_argument(f"--profile-directory=profile_{acc_name}")
+
+    # Terminate leftover chrome processes that lock the profile
+    _kill_zombie_chrome_processes(profile_dir)
 
     singleton_lock = profile_dir / "SingletonLock"
     if singleton_lock.exists() or singleton_lock.is_symlink():
