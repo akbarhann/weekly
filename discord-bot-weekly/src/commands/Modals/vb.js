@@ -626,8 +626,8 @@ module.exports = {
                         {
                             name: 'Cakupan',
                             value: scope === 'all_outlets' ? 'Semua Outlet' :
-                                   scope === 'select_merchant' ? `Merchant Terpilih (${selectedOutlets.length})` :
-                                   `Jalankan yang Belum (${selectedOutlets.length} terpilih)`,
+                                scope === 'select_merchant' ? `Merchant Terpilih (${selectedOutlets.length})` :
+                                    `Jalankan yang Belum (${selectedOutlets.length} terpilih)`,
                             inline: true
                         }
                     ];
@@ -814,7 +814,7 @@ module.exports = {
                         options: [
                             { label: 'Semua Outlet', value: 'all_outlets', description: 'Tarik data untuk seluruh outlet di GSheets' },
                             { label: 'Pilih Merchant Tertentu', value: 'select_merchant', description: 'Pilih satu atau lebih outlet dari daftar' },
-                            { label: '🧡 Jalankan yang Belum', value: 'run_remaining', description: 'Hanya jalankan outlet yang laporannya belum ada di server' }
+                            { label: 'Jalankan yang Belum', value: 'run_remaining', description: 'Hanya jalankan outlet yang laporannya belum ada di server' }
                         ],
                         minValues: 1,
                         maxValues: 1,
@@ -1171,8 +1171,8 @@ module.exports = {
                         {
                             name: 'Cakupan',
                             value: scope === 'all_outlets' ? 'Semua Outlet' :
-                                   scope === 'select_merchant' ? `Merchant Terpilih (${selectedOutlets.length})` :
-                                   `Jalankan yang Belum (${selectedOutlets.length} terpilih)`,
+                                scope === 'select_merchant' ? `Merchant Terpilih (${selectedOutlets.length})` :
+                                    `Jalankan yang Belum (${selectedOutlets.length} terpilih)`,
                             inline: true
                         },
                         { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
