@@ -313,10 +313,18 @@ async def run_all(date_start: str = None, date_end: str = None, output_dir: str 
 
     master_df = pd.concat(frames, ignore_index=True)
 
-    # Deduplicate based on Transaction ID if it exists
+    # Deduplicate based on Transaction ID if it exists, keeping rows with null/empty Transaction ID
     if "Transaction ID" in master_df.columns:
         before_count = len(master_df)
-        master_df = master_df.drop_duplicates(subset=["Transaction ID"], keep="first")
+        is_valid_tx = master_df["Transaction ID"].notna() & (master_df["Transaction ID"].astype(str).str.strip() != "") & (master_df["Transaction ID"].astype(str).str.lower() != "nan")
+        valid_tx_df = master_df[is_valid_tx]
+        invalid_tx_df = master_df[~is_valid_tx]
+        
+        valid_tx_df = valid_tx_df.drop_duplicates(subset=["Transaction ID"], keep="first")
+        if "Long Order ID" in invalid_tx_df.columns:
+            invalid_tx_df = invalid_tx_df.drop_duplicates(subset=["Long Order ID"], keep="first")
+            
+        master_df = pd.concat([valid_tx_df, invalid_tx_df], ignore_index=True)
         after_count = len(master_df)
         if before_count > after_count:
             log.info(f"  [INFO] Menghapus {before_count - after_count} baris duplikat.")
