@@ -203,6 +203,7 @@ def interactive_mode():
                 df_shopee = df_s[df_s["Role"].astype(str).str.strip().str.lower() == "owner"].dropna(subset=["Portal"])
             else:
                 df_shopee = df_s.dropna(subset=["Portal"])
+            df_shopee = df_shopee[df_shopee["Portal"].astype(str).str.strip().str.lower() != "l"]
         except Exception as e:
             print(f"  {RED}[ERROR] Gagal mengunduh Google Sheets: {e}{RESET}")
             sys.exit(1)

@@ -547,14 +547,14 @@ def run_pipeline():
                                 df = df.loc[is_valid_order_id].copy()
                                 
                             # Identify Status column
-                            status_col = None
-                            if "Status" in df.columns:
-                                status_col = "Status"
-                            
-                            if status_col:
-                                status = df[status_col].fillna("").astype(str).str.strip().str.casefold()
-                                is_not_cancelled = ~status.str.contains("batal|cancel", na=False, case=False)
-                                df = df.loc[is_not_cancelled].copy()
+                            # status_col = None
+                            # if "Status" in df.columns:
+                            #     status_col = "Status"
+                            # 
+                            # if status_col:
+                            #     status = df[status_col].fillna("").astype(str).str.strip().str.casefold()
+                            #     is_not_cancelled = ~status.str.contains("batal|cancel", na=False, case=False)
+                            #     df = df.loc[is_not_cancelled].copy()
 
                         if not df.empty:
                             for col in financial_cols.get(sheet, []):

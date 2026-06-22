@@ -50,66 +50,65 @@ def get_vb_portals() -> list:
             try:
                 with open(cred_file, "r") as f:
                     cached = json.load(f)
-                    return cached.get("portals", [])
+                    portals = cached.get("portals", [])
             except Exception as err:
                 log.error(f"❌ Failed to read cache: {err}")
-        return []
-    
-    log.info("🌐 Fetching portal credentials dynamically from oogle Sheets...")
-    try:
-        df = pd.read_csv(CRED_URL)
-        if "Notes" in df.columns:
-            df = df[~df["Notes"].astype(str).str.contains("restricted", na=False, case=False)]
-        owner_df = df[df['Role'].str.strip().str.lower() == 'owner'].copy()
-        
-        for _, row in owner_df.iterrows():
-            portal_val = str(row.get('Portal', '')).strip()
-            account_name = f"portal_{portal_val.lower()}"
-            
-            # Format phone number safely
-            phone_val = row.get('Phone')
-            if pd.isna(phone_val):
-                phone_str = ""
-            else:
-                try:
-                    phone_str = str(int(float(phone_val))).strip()
-                except:
-                    phone_str = str(phone_val).strip()
-            
-            raw_merchant = row.get('Merchant Name')
-            if pd.isna(raw_merchant) or str(raw_merchant).strip() == "":
-                merchant_name = portal_val
-            else:
-                merchant_name = str(raw_merchant).strip()
-
-            portals.append({
-                "account_name": account_name,
-                "username": str(row.get('Username', '')).strip(),
-                "password": str(row.get('Password', '')).strip(),
-                "phone": phone_str,
-                "merchant_name": merchant_name
-            })
-            
-        if portals:
-            # Cache the portals to credentials_vb.json
-            with open(cred_file, "w") as f:
-                json.dump({"portals": portals}, f, indent=2)
-            log.info(f"💾 Saved {len(portals)} portal credentials to local cache: {cred_file.name}")
-            return portals
-    except Exception as e:
-        log.warning(f"⚠️ Failed to fetch portals from Google Sheets: {e}")
-        
-    # Fallback to local cache
-    if cred_file.exists():
-        log.info(f"📂 Falling back to local cache: {cred_file.name}")
+    else:
+        log.info("🌐 Fetching portal credentials dynamically from oogle Sheets...")
         try:
-            with open(cred_file, "r") as f:
-                cached = json.load(f)
-                return cached.get("portals", [])
-        except Exception as err:
-            log.error(f"❌ Failed to read cache: {err}")
+            df = pd.read_csv(CRED_URL)
+            if "Notes" in df.columns:
+                df = df[~df["Notes"].astype(str).str.contains("restricted", na=False, case=False)]
+            owner_df = df[df['Role'].str.strip().str.lower() == 'owner'].copy()
             
-    return []
+            for _, row in owner_df.iterrows():
+                portal_val = str(row.get('Portal', '')).strip()
+                account_name = f"portal_{portal_val.lower()}"
+                
+                # Format phone number safely
+                phone_val = row.get('Phone')
+                if pd.isna(phone_val):
+                    phone_str = ""
+                else:
+                    try:
+                        phone_str = str(int(float(phone_val))).strip()
+                    except:
+                        phone_str = str(phone_val).strip()
+                
+                raw_merchant = row.get('Merchant Name')
+                if pd.isna(raw_merchant) or str(raw_merchant).strip() == "":
+                    merchant_name = portal_val
+                else:
+                    merchant_name = str(raw_merchant).strip()
+
+                portals.append({
+                    "account_name": account_name,
+                    "username": str(row.get('Username', '')).strip(),
+                    "password": str(row.get('Password', '')).strip(),
+                    "phone": phone_str,
+                    "merchant_name": merchant_name
+                })
+                
+            if portals:
+                # Cache the portals to credentials_vb.json
+                with open(cred_file, "w") as f:
+                    json.dump({"portals": portals}, f, indent=2)
+                log.info(f"💾 Saved {len(portals)} portal credentials to local cache: {cred_file.name}")
+        except Exception as e:
+            log.warning(f"⚠️ Failed to fetch portals from Google Sheets: {e}")
+            # Fallback to local cache
+            if cred_file.exists():
+                log.info(f"📂 Falling back to local cache: {cred_file.name}")
+                try:
+                    with open(cred_file, "r") as f:
+                        cached = json.load(f)
+                        portals = cached.get("portals", [])
+                except Exception as err:
+                    log.error(f"❌ Failed to read cache: {err}")
+                    
+    # Filter out portal_l
+    portals = [p for p in portals if p.get("account_name", "").lower() != "portal_l"]
+    return portals
 
 def initialize_all_sessions(headless_on_login=False, only_portal=None):
     """

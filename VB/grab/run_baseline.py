@@ -293,13 +293,13 @@ async def run_all(date_start: str = None, date_end: str = None, output_dir: str 
         else:
             is_valid_order_id = pd.Series(True, index=working.index)
             
-        if "Status" in working.columns:
-            working["Status"] = working["Status"].fillna("").astype(str).str.strip().str.casefold()
-            is_not_cancelled = working["Status"].ne("cancelled")
-        else:
-            is_not_cancelled = pd.Series(True, index=working.index)
+        # if "Status" in working.columns:
+        #     working["Status"] = working["Status"].fillna("").astype(str).str.strip().str.casefold()
+        #     is_not_cancelled = working["Status"].ne("cancelled")
+        # else:
+        #     is_not_cancelled = pd.Series(True, index=working.index)
             
-        master_df = working.loc[is_valid_order_id & is_not_cancelled].copy()
+        master_df = working.loc[is_valid_order_id].copy()
         
         master_xlsx = laporan_dir / "0Master.xlsx"
         version = 1
