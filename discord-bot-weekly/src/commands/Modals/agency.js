@@ -40,6 +40,175 @@ let cachedWeeklySheetData = null;
 let lastWeeklyCacheTime = 0;
 const WEEKLY_CACHE_DURATION = 30 * 1000; // 30 seconds cache
 
+function resolveShopeeMerchant(outletName) {
+    if (!cachedWeeklySheetData) return outletName;
+    const lines = cachedWeeklySheetData.split(/\r?\n/);
+    if (lines.length < 2) return outletName;
+
+    const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.trim().replace(/^"|"$/g, ''));
+    const appIdx = headers.indexOf('Aplikasi');
+    const nameIdx = headers.indexOf('Nama Outlet');
+    const merchantIdx = headers.indexOf('Merchant Name');
+
+    if (appIdx === -1 || nameIdx === -1 || merchantIdx === -1) return outletName;
+
+    const outletLower = outletName.trim().toLowerCase();
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        const cols = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/^"|"$/g, '').trim());
+        if (cols.length <= Math.max(appIdx, nameIdx, merchantIdx)) continue;
+
+        const app = cols[appIdx].toLowerCase();
+        const name = cols[nameIdx].trim().toLowerCase();
+        const merchant = cols[merchantIdx].trim();
+
+        if (app.includes('shopee') && name === outletLower && merchant && merchant !== '-' && merchant !== 'nan') {
+            return merchant;
+        }
+    }
+    return outletName;
+}
+
+function isOutletDownloaded(target, platform, startDate, endDate, outletName) {
+    const WEEKLY_DIR = getWeeklyTargetDir(target);
+    const outputDir = path.join(WEEKLY_DIR, 'laporan', platform, `${startDate}_to_${endDate}`);
+    if (!fs.existsSync(outputDir)) return false;
+
+    let checkName = outletName;
+    if (platform === 'shopee') {
+        checkName = resolveShopeeMerchant(outletName);
+    }
+
+    try {
+        const files = fs.readdirSync(outputDir);
+        const cleanName = checkName.trim().toLowerCase();
+        return files.some(file => {
+            const fLower = file.toLowerCase();
+            return fLower.startsWith(cleanName + '_') && fLower.endsWith('.xlsx');
+        });
+    } catch (err) {
+        return false;
+    }
+}
+
+async function askRemainingSelection(interaction, { stepName, title, placeholder, options, allRemainingValues, fields = [], hasOutletStep = true, isAllPlatform = false }) {
+    let selectedValues = new Set();
+
+    const getComponents = () => {
+        const rows = [];
+        const chunks = [];
+        for (let i = 0; i < options.length; i += 25) {
+            chunks.push(options.slice(i, i + 25));
+        }
+
+        const safeChunks = chunks.slice(0, 3); // Limit to 3 menus
+        safeChunks.forEach((chunk, index) => {
+            const currentMax = Math.min(chunk.length, 25);
+
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId(`agency_remaining_menu_${index}`)
+                .setPlaceholder(placeholder)
+                .setMinValues(1)
+                .setMaxValues(currentMax)
+                .addOptions(chunk.map(opt => ({
+                    label: opt.label,
+                    value: opt.value,
+                    default: selectedValues.has(opt.value)
+                })));
+
+            rows.push(new ActionRowBuilder().addComponents(selectMenu));
+        });
+
+        const buttonsRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('agency_back_btn')
+                .setLabel('⬅️ Kembali')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('agency_run_all_remaining_btn')
+                .setLabel('🟢 Jalankan Semua')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId('agency_continue_btn')
+                .setLabel(selectedValues.size > 0 ? '➡️ Lanjutkan' : 'Pilih opsi terlebih dahulu')
+                .setStyle(selectedValues.size > 0 ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                .setDisabled(selectedValues.size === 0)
+        );
+
+        rows.push(buttonsRow);
+        return rows;
+    };
+
+    const getEmbed = () => {
+        const selectedArray = Array.from(selectedValues);
+        let description = `Pilih outlet spesifik yang ingin dijalankan dari menu, atau klik **Jalankan Semua** untuk memproses seluruh ${allRemainingValues.length} outlet tersisa.\n\n`;
+        if (selectedArray.length > 0) {
+            const labelList = selectedArray.map(val => {
+                const found = options.find(opt => opt.value === val);
+                return found ? found.label : val;
+            }).join(', ');
+
+            const displayList = labelList.length > 300 ? labelList.substring(0, 297) + '...' : labelList;
+            description += `🔹 **Pilihan saat ini:** ${displayList}`;
+        } else {
+            description += `⚠️ *Belum ada opsi terpilih (Gunakan dropdown atau klik Jalankan Semua)*`;
+        }
+
+        return makeProgressEmbed(stepName, title, description, fields, hasOutletStep, isAllPlatform);
+    };
+
+    await interaction.update({
+        embeds: [getEmbed()],
+        components: getComponents()
+    });
+
+    const message = interaction.message || await interaction.fetchReply();
+
+    return new Promise((resolve, reject) => {
+        const collector = message.createMessageComponentCollector({
+            filter: i => i.user.id === interaction.user.id,
+            time: 300000
+        });
+
+        let latestInteraction = null;
+
+        collector.on('collect', async i => {
+            latestInteraction = i;
+            if (i.customId.startsWith('agency_remaining_menu_')) {
+                const menuIndex = parseInt(i.customId.split('_').pop());
+                const currentChunk = options.slice(menuIndex * 25, (menuIndex + 1) * 25);
+
+                currentChunk.forEach(opt => selectedValues.delete(opt.value));
+                i.values.forEach(val => selectedValues.add(val));
+
+                await i.update({
+                    embeds: [getEmbed()],
+                    components: getComponents()
+                });
+            } else if (i.customId === 'agency_run_all_remaining_btn') {
+                collector.stop('all_remaining');
+            } else if (i.customId === 'agency_continue_btn') {
+                collector.stop('confirmed');
+            } else if (i.customId === 'agency_back_btn') {
+                collector.stop('back');
+            }
+        });
+
+        collector.on('end', (collected, reason) => {
+            if (reason === 'all_remaining' && latestInteraction) {
+                resolve({ status: 'next', values: allRemainingValues, lastInteraction: latestInteraction });
+            } else if (reason === 'confirmed' && latestInteraction) {
+                resolve({ status: 'next', values: Array.from(selectedValues), lastInteraction: latestInteraction });
+            } else if (reason === 'back' && latestInteraction) {
+                resolve({ status: 'back', lastInteraction: latestInteraction });
+            } else {
+                reject(new Error('Timeout or cancelled'));
+            }
+        });
+    });
+}
+
 function fetchCSV(url) {
     return new Promise((resolve, reject) => {
         const fetchUrl = (currentUrl) => {
@@ -434,7 +603,7 @@ module.exports = {
 
                     platform = result.values[0];
                     lastInteraction = result.lastInteraction;
-                    step = 'scope';
+                    step = 'period';
 
                 } else if (step === 'scope') {
                     const result = await askSelection(lastInteraction, {
@@ -443,13 +612,15 @@ module.exports = {
                         placeholder: 'Pilih cakupan outlet...',
                         options: [
                             { label: 'Semua Outlet', value: 'all_outlets', description: 'Tarik data untuk seluruh outlet di GSheets' },
-                            { label: 'Pilih Merchant Tertentu', value: 'select_merchant', description: 'Pilih satu atau lebih outlet dari daftar' }
+                            { label: 'Pilih Merchant Tertentu', value: 'select_merchant', description: 'Pilih satu atau lebih outlet dari daftar' },
+                            { label: '🧡 Jalankan yang Belum', value: 'run_remaining', description: 'Hanya jalankan outlet yang laporannya belum ada di server' }
                         ],
                         minValues: 1,
                         maxValues: 1,
                         fields: [
                             { name: 'Tipe', value: 'AGENCY', inline: true },
-                            { name: 'Platform', value: platform.toUpperCase(), inline: true }
+                            { name: 'Platform', value: platform.toUpperCase(), inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
                         ],
                         hasOutletStep: true,
                         isAllPlatform: platform === 'all',
@@ -458,7 +629,7 @@ module.exports = {
                     });
 
                     if (result.status === 'back') {
-                        step = 'aplikator';
+                        step = 'period';
                         lastInteraction = result.lastInteraction;
                         continue;
                     }
@@ -472,9 +643,16 @@ module.exports = {
                         } else {
                             step = 'outlet_single';
                         }
+                    } else if (scope === 'run_remaining') {
+                        if (platform === 'all') {
+                            step = 'outlet_grab_remaining';
+                        } else {
+                            step = 'outlet_single_remaining';
+                        }
                     } else {
                         selectedOutlets = [];
-                        step = 'period';
+                        skipExisting = false;
+                        step = 'confirmation';
                     }
 
                 } else if (step === 'outlet_grab') {
@@ -500,7 +678,8 @@ module.exports = {
                         fields: [
                             { name: 'Tipe', value: 'AGENCY', inline: true },
                             { name: 'Platform', value: 'ALL (Grab)', inline: true },
-                            { name: 'Cakupan', value: 'Merchant Terpilih', inline: true }
+                            { name: 'Cakupan', value: 'Merchant Terpilih', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
                         ],
                         hasOutletStep: true,
                         isAllPlatform: true,
@@ -542,6 +721,7 @@ module.exports = {
                             { name: 'Tipe', value: 'AGENCY', inline: true },
                             { name: 'Platform', value: 'ALL (Shopee)', inline: true },
                             { name: 'Cakupan', value: 'Merchant Terpilih', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true },
                             { name: 'Outlet Grab Terpilih', value: grabResultValues.length.toString(), inline: true }
                         ],
                         hasOutletStep: true,
@@ -559,7 +739,7 @@ module.exports = {
                     shopeeResultValues = result.values;
                     selectedOutlets = grabResultValues.concat(shopeeResultValues);
                     lastInteraction = result.lastInteraction;
-                    step = 'period';
+                    step = 'confirmation';
 
                 } else if (step === 'outlet_single') {
                     const weeklyOutlets = await getWeeklyOutlets(platform);
@@ -584,7 +764,8 @@ module.exports = {
                         fields: [
                             { name: 'Tipe', value: 'AGENCY', inline: true },
                             { name: 'Platform', value: platform.toUpperCase(), inline: true },
-                            { name: 'Cakupan', value: 'Merchant Terpilih', inline: true }
+                            { name: 'Cakupan', value: 'Merchant Terpilih', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
                         ],
                         hasOutletStep: true,
                         isAllPlatform: false,
@@ -600,216 +781,199 @@ module.exports = {
 
                     selectedOutlets = result.values;
                     lastInteraction = result.lastInteraction;
-                    step = 'period';
+                    step = 'confirmation';
 
-                } else if (step === 'period') {
-                    const today = new Date();
-                    const dayOfWeek = today.getDay();
-                    const daysToLastSunday = dayOfWeek === 0 ? 7 : dayOfWeek;
-                    const lastSunday = new Date(today);
-                    lastSunday.setDate(today.getDate() - daysToLastSunday);
-                    const lastMonday = new Date(lastSunday);
-                    lastMonday.setDate(lastSunday.getDate() - 6);
+                } else if (step === 'outlet_grab_remaining') {
+                    const rawOutlets = await getWeeklyOutlets('grab');
+                    const remainingGrab = rawOutlets.filter(name => !isOutletDownloaded('agency', 'grab', startDate, endDate, name));
 
-                    const formatDateDisplay = (d) => {
-                        const day = String(d.getDate()).padStart(2, '0');
-                        const month = String(d.getMonth() + 1).padStart(2, '0');
-                        const year = d.getFullYear();
-                        return `${day}-${month}-${year}`;
-                    };
+                    if (remainingGrab.length === 0) {
+                        grabResultValues = [];
+                        step = 'outlet_shopee_remaining';
+                        continue;
+                    }
 
-                    const defaultStartDisp = formatDateDisplay(lastMonday);
-                    const defaultEndDisp = formatDateDisplay(lastSunday);
+                    const outletOptions = remainingGrab.map(name => ({
+                        label: name.substring(0, 100),
+                        value: name
+                    }));
 
-                    const defaultStartISO = toISOFormat(lastMonday);
-                    const defaultEndISO = toISOFormat(lastSunday);
+                    const result = await askRemainingSelection(lastInteraction, {
+                        stepName: 'Outlet Grab',
+                        title: `🏪 Grab: Jalankan yang Belum (${remainingGrab.length} tersisa)`,
+                        placeholder: 'Pilih satu atau lebih outlet Grab...',
+                        options: outletOptions,
+                        allRemainingValues: remainingGrab,
+                        fields: [
+                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Platform', value: 'ALL (Grab)', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
+                        ],
+                        hasOutletStep: true,
+                        isAllPlatform: true
+                    });
 
-                    const currentFields = [
-                        { name: 'Tipe', value: 'AGENCY', inline: true },
-                        { name: 'Platform', value: platform.toUpperCase(), inline: true },
-                        { name: 'Cakupan', value: (scope === 'select_merchant') ? `Merchant Terpilih (${selectedOutlets.length})` : 'Semua Outlet', inline: true }
-                    ];
+                    if (result.status === 'back') {
+                        step = 'scope';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
 
-                    let errorMsg = null;
+                    grabResultValues = result.values;
+                    lastInteraction = result.lastInteraction;
+                    step = 'outlet_shopee_remaining';
 
-                    const getPeriodEmbed = () => {
-                        let desc = 'Silakan pilih **📅 7 Hari Penuh (Senin-Minggu)**, atau klik **⚙️ Custom Date Range** untuk menentukan rentang tanggal secara manual.';
-                        if (errorMsg) {
-                            desc = `❌ **Error:** ${errorMsg}\n\n` + desc;
-                        }
-                        return makeProgressEmbed('Periode', '📅 Pilih Periode Laporan', desc, currentFields, (scope === 'select_merchant'), platform === 'all');
-                    };
+                } else if (step === 'outlet_shopee_remaining') {
+                    const rawOutlets = await getWeeklyOutlets('shopee');
+                    const remainingShopee = rawOutlets.filter(name => !isOutletDownloaded('agency', 'shopee', startDate, endDate, name));
 
-                    const getPeriodComponents = () => {
-                        return [
-                            new ActionRowBuilder().addComponents(
-                                new ButtonBuilder()
-                                    .setCustomId('agency_shortcut_7_days_btn')
-                                    .setLabel(`📅 7 Hari Penuh (${defaultStartDisp} s/d ${defaultEndDisp})`)
-                                    .setStyle(ButtonStyle.Success),
-                                new ButtonBuilder()
-                                    .setCustomId('agency_open_date_modal_btn')
-                                    .setLabel('⚙️ Custom Date Range')
-                                    .setStyle(ButtonStyle.Secondary),
+                    if (remainingShopee.length === 0) {
+                        if (grabResultValues.length === 0) {
+                            const embed = makeProgressEmbed('Outlet Shopee', '🏪 Jalankan yang Belum', '🎉 **Semua outlet Grab & Shopee sudah terunduh/selesai diproses!**', [
+                                { name: 'Tipe', value: 'AGENCY', inline: true },
+                                { name: 'Platform', value: 'ALL', inline: true },
+                                { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
+                            ], true, true);
+
+                            const row = new ActionRowBuilder().addComponents(
                                 new ButtonBuilder()
                                     .setCustomId('agency_back_btn')
                                     .setLabel('⬅️ Kembali')
                                     .setStyle(ButtonStyle.Secondary)
-                            )
-                        ];
-                    };
+                            );
 
-                    await lastInteraction.update({
-                        embeds: [getPeriodEmbed()],
-                        components: getPeriodComponents()
-                    });
+                            await lastInteraction.update({
+                                embeds: [embed],
+                                components: [row]
+                            });
 
-                    const periodMsg = lastInteraction.message || await lastInteraction.fetchReply();
-
-                    const getPeriodChoice = () => {
-                        return new Promise((resolvePeriod, rejectPeriod) => {
-                            const collector = periodMsg.createMessageComponentCollector({
-                                filter: i => i.user.id === interaction.user.id && ['agency_shortcut_7_days_btn', 'agency_open_date_modal_btn', 'agency_back_btn'].includes(i.customId),
+                            const msg = lastInteraction.message || await lastInteraction.fetchReply();
+                            const i = await msg.awaitMessageComponent({
+                                filter: buttonI => buttonI.user.id === interaction.user.id && buttonI.customId === 'agency_back_btn',
                                 time: 300000
                             });
 
-                            collector.on('collect', async i => {
-                                if (i.customId === 'agency_back_btn') {
-                                    collector.stop('back');
-                                    resolvePeriod({
-                                        status: 'back',
-                                        lastInteract: i
-                                    });
-                                    return;
-                                }
-
-                                if (i.customId === 'agency_shortcut_7_days_btn') {
-                                    collector.stop('confirmed');
-                                    resolvePeriod({
-                                        status: 'confirmed',
-                                        start: defaultStartISO,
-                                        end: defaultEndISO,
-                                        lastInteract: i
-                                    });
-                                    return;
-                                }
-
-                                // Jika klik custom date, tampilkan modal
-                                const modalId = `agency_date_modal_${Date.now()}`;
-                                const dateModal = new ModalBuilder()
-                                    .setCustomId(modalId)
-                                    .setTitle('Rentang Tanggal Custom');
-
-                                const startInput = new TextInputBuilder()
-                                    .setCustomId('start_date_input')
-                                    .setLabel('TANGGAL MULAI (DD-MM-YYYY)')
-                                    .setStyle(TextInputStyle.Short)
-                                    .setPlaceholder('Contoh: 01-06-2026')
-                                    .setMinLength(10)
-                                    .setMaxLength(10)
-                                    .setRequired(true);
-
-                                const endInput = new TextInputBuilder()
-                                    .setCustomId('end_date_input')
-                                    .setLabel('TANGGAL SELESAI (DD-MM-YYYY)')
-                                    .setStyle(TextInputStyle.Short)
-                                    .setPlaceholder('Contoh: 07-06-2026')
-                                    .setMinLength(10)
-                                    .setMaxLength(10)
-                                    .setRequired(true);
-
-                                dateModal.addComponents(
-                                    new ActionRowBuilder().addComponents(startInput),
-                                    new ActionRowBuilder().addComponents(endInput)
-                                );
-
-                                await i.showModal(dateModal);
-
-                                try {
-                                    const modalSubmit = await i.awaitModalSubmit({
-                                        filter: mi => mi.user.id === interaction.user.id && mi.customId === modalId,
-                                        time: 120000
-                                    });
-
-                                    const startDateStr = modalSubmit.fields.getTextInputValue('start_date_input').trim();
-                                    const endDateStr = modalSubmit.fields.getTextInputValue('end_date_input').trim();
-
-                                    const dateRegex = /^\d{2}-\d{2}-\d{4}$/;
-                                    if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
-                                        errorMsg = 'Format tanggal salah. Gunakan format DD-MM-YYYY (contoh: 01-06-2026).';
-                                        await modalSubmit.update({
-                                            embeds: [getPeriodEmbed()],
-                                            components: getPeriodComponents()
-                                        });
-                                        return;
-                                    }
-
-                                    const parsedStart = parseDate(startDateStr);
-                                    const parsedEnd = parseDate(endDateStr);
-
-                                    if (!parsedStart || !parsedEnd) {
-                                        errorMsg = 'Tanggal tidak ada di kalender (contoh: 31 Februari).';
-                                        await modalSubmit.update({
-                                            embeds: [getPeriodEmbed()],
-                                            components: getPeriodComponents()
-                                        });
-                                        return;
-                                    }
-
-                                    if (parsedStart > parsedEnd) {
-                                        errorMsg = 'Tanggal mulai tidak boleh melebihi tanggal selesai.';
-                                        await modalSubmit.update({
-                                            embeds: [getPeriodEmbed()],
-                                            components: getPeriodComponents()
-                                        });
-                                        return;
-                                    }
-
-                                    collector.stop('confirmed');
-                                    resolvePeriod({
-                                        status: 'confirmed',
-                                        start: toISOFormat(parsedStart),
-                                        end: toISOFormat(parsedEnd),
-                                        lastInteract: modalSubmit
-                                    });
-                                } catch (err) {
-                                    console.error('Error awaiting modal submit:', err);
-                                }
-                            });
-
-                            collector.on('end', (collected, reason) => {
-                                if (reason !== 'confirmed' && reason !== 'back') {
-                                    rejectPeriod(new Error('Timeout atau dibatalkan'));
-                                }
-                            });
-                        });
-                    };
-
-                    const periodResults = await getPeriodChoice();
-                    if (periodResults.status === 'back') {
-                        lastInteraction = periodResults.lastInteract;
-                        if (scope === 'select_merchant') {
-                            if (platform === 'all') {
-                                step = 'outlet_shopee';
-                            } else {
-                                step = 'outlet_single';
-                            }
-                        } else {
+                            lastInteraction = i;
                             step = 'scope';
+                            continue;
                         }
+
+                        shopeeResultValues = [];
+                        selectedOutlets = grabResultValues;
+                        skipExisting = true;
+                        step = 'confirmation';
                         continue;
                     }
 
-                    startDate = periodResults.start;
-                    endDate = periodResults.end;
-                    lastInteraction = periodResults.lastInteract;
+                    const outletOptions = remainingShopee.map(name => ({
+                        label: name.substring(0, 100),
+                        value: name
+                    }));
+
+                    const result = await askRemainingSelection(lastInteraction, {
+                        stepName: 'Outlet Shopee',
+                        title: `🏪 Shopee: Jalankan yang Belum (${remainingShopee.length} tersisa)`,
+                        placeholder: 'Pilih satu atau lebih outlet Shopee...',
+                        options: outletOptions,
+                        allRemainingValues: remainingShopee,
+                        fields: [
+                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Platform', value: 'ALL (Shopee)', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true },
+                            { name: 'Outlet Grab Terpilih', value: grabResultValues.length.toString(), inline: true }
+                        ],
+                        hasOutletStep: true,
+                        isAllPlatform: true
+                    });
+
+                    if (result.status === 'back') {
+                        step = 'outlet_grab_remaining';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
+
+                    shopeeResultValues = result.values;
+                    selectedOutlets = grabResultValues.concat(shopeeResultValues);
+                    skipExisting = true;
+                    lastInteraction = result.lastInteraction;
                     step = 'confirmation';
-                    continue;
+
+                } else if (step === 'outlet_single_remaining') {
+                    const weeklyOutlets = await getWeeklyOutlets(platform);
+                    const remainingOutlets = weeklyOutlets.filter(name => !isOutletDownloaded('agency', platform, startDate, endDate, name));
+
+                    if (remainingOutlets.length === 0) {
+                        const embed = makeProgressEmbed('Outlet', '🏪 Jalankan yang Belum', '🎉 **Semua outlet sudah terunduh/selesai diproses!** Tidak ada outlet yang tersisa untuk rentang tanggal ini.', [
+                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Platform', value: platform.toUpperCase(), inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
+                        ], true, false);
+
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('agency_back_btn')
+                                .setLabel('⬅️ Kembali')
+                                .setStyle(ButtonStyle.Secondary)
+                        );
+
+                        await lastInteraction.update({
+                            embeds: [embed],
+                            components: [row]
+                        });
+
+                        const msg = lastInteraction.message || await lastInteraction.fetchReply();
+                        const i = await msg.awaitMessageComponent({
+                            filter: buttonI => buttonI.user.id === interaction.user.id && buttonI.customId === 'agency_back_btn',
+                            time: 300000
+                        });
+
+                        lastInteraction = i;
+                        step = 'scope';
+                        continue;
+                    }
+
+                    const outletOptions = remainingOutlets.map(name => ({
+                        label: name.substring(0, 100),
+                        value: name
+                    }));
+
+                    const result = await askRemainingSelection(lastInteraction, {
+                        stepName: 'Outlet',
+                        title: `🏪 Jalankan yang Belum (${remainingOutlets.length} outlet tersisa)`,
+                        placeholder: 'Pilih satu atau lebih outlet yang belum...',
+                        options: outletOptions,
+                        allRemainingValues: remainingOutlets,
+                        fields: [
+                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Platform', value: platform.toUpperCase(), inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
+                        ],
+                        hasOutletStep: true,
+                        isAllPlatform: false
+                    });
+
+                    if (result.status === 'back') {
+                        step = 'scope';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
+
+                    selectedOutlets = result.values;
+                    skipExisting = true;
+                    lastInteraction = result.lastInteraction;
+                    step = 'confirmation';
+
                 } else if (step === 'confirmation') {
                     const currentFields = [
                         { name: 'Tipe', value: 'AGENCY', inline: true },
                         { name: 'Platform', value: platform.toUpperCase(), inline: true },
-                        { name: 'Cakupan', value: (scope === 'select_merchant') ? `Merchant Terpilih (${selectedOutlets.length})` : 'Semua Outlet', inline: true },
+                        {
+                            name: 'Cakupan',
+                            value: scope === 'all_outlets' ? 'Semua Outlet' :
+                                   scope === 'select_merchant' ? `Merchant Terpilih (${selectedOutlets.length})` :
+                                   `Jalankan yang Belum (${selectedOutlets.length} terpilih)`,
+                            inline: true
+                        },
                         { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
                     ];
 
@@ -821,7 +985,7 @@ module.exports = {
                             '🟢 **Jalankan Semua**: Memproses ulang seluruh outlet tanpa terkecuali.\n' +
                             '🟠 **Lewati yang Sudah Ada**: Hanya memproses outlet yang belum selesai atau belum terunduh laporannya di server.',
                             currentFields,
-                            (scope === 'select_merchant'),
+                            (scope === 'select_merchant' || scope === 'run_remaining'),
                             platform === 'all'
                         );
                     };
@@ -886,7 +1050,13 @@ module.exports = {
                     const confirmResults = await getConfirmChoice();
                     if (confirmResults.status === 'back') {
                         lastInteraction = confirmResults.lastInteract;
-                        step = 'period';
+                        if (scope === 'all_outlets') {
+                            step = 'scope';
+                        } else if (scope === 'select_merchant') {
+                            step = platform === 'all' ? 'outlet_shopee' : 'outlet_single';
+                        } else if (scope === 'run_remaining') {
+                            step = platform === 'all' ? 'outlet_shopee_remaining' : 'outlet_single_remaining';
+                        }
                         continue;
                     }
 
