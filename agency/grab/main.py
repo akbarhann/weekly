@@ -60,7 +60,7 @@ log = setup_logger()
 
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3tLKBNXDqRgBw0mNhKZFxgvKx-JoiTDzm_s5Ix1cm7O6HCv4IvExOLR2HSRVaXSsx82V348mcr9X4/pub?gid=0&single=true&output=csv"
 
-async def run_all(date_start: str = None, date_end: str = None, output_dir: str = None, user_filter: str = None, outlet_filter: str = None, branch_filter: str = None, skip_download: bool = False):
+async def run_all(date_start: str = None, date_end: str = None, output_dir: str = None, user_filter: str = None, outlet_filter: str = None, branch_filter: str = None, skip_download: bool = False, skip_existing: bool = False):
     # Reload env just in case
     load_dotenv(override=True)
     
@@ -150,6 +150,25 @@ async def run_all(date_start: str = None, date_end: str = None, output_dir: str 
     
     log.info(f"  Unique Accounts: {len(unique_users)}")
     log.info("="*60)
+
+    if skip_existing:
+        active_users = {}
+        for u, info in unique_users.items():
+            incomplete_portals = []
+            for portal in info["portals"]:
+                portal_safe_name = f"{portal['outlet']}_{portal['branch']}" if portal['branch'] else f"{portal['outlet']}"
+                portal_safe_name = portal_safe_name.replace("/", "_").replace("\\", "_")
+                dest_xlsx = laporan_dir / f"{portal_safe_name}.xlsx"
+                if not dest_xlsx.exists():
+                    incomplete_portals.append(portal)
+            if incomplete_portals:
+                active_users[u] = info
+            else:
+                log.info(f"⏭️ [SKIP] Account {u} is already completed (All Excel files exist in {laporan_dir.name}).")
+        unique_users = active_users
+        if not unique_users:
+            log.info("⏭️ [SKIP] All accounts are already completed. Bypassing browser download phase.")
+            skip_download = True
     
     if skip_download:
         log.info("⏭️ [SKIP] Bypassing browser download phase (Phases 1 & 2) as --skip-download is enabled.")
@@ -474,6 +493,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip browser automation and only process/merge raw files.",
     )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip already processed accounts.",
+    )
     args = parser.parse_args()
     asyncio.run(run_all(
         date_start=args.start_date, 
@@ -482,6 +506,7 @@ if __name__ == "__main__":
         user_filter=args.user,
         outlet_filter=args.outlet,
         branch_filter=args.branch,
-        skip_download=args.skip_download
+        skip_download=args.skip_download,
+        skip_existing=args.skip_existing
     ))
 

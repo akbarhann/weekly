@@ -211,6 +211,7 @@ def run_pipeline():
     parser.add_argument("--end", type=str, help="End date (YYYY-MM-DD)", default=None)
     parser.add_argument("--output-dir", type=str, help="Override output directory for reports", default=None)
     parser.add_argument("--skip-download", action="store_true", help="Skip browser automation and only process/merge raw files in output directory")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip already processed merchants")
     parser.add_argument("--merchant", type=str, help="Filter specific merchant name to run", default=None)
     args = parser.parse_args()
 
@@ -324,6 +325,25 @@ def run_pipeline():
 
     # ── 1. Determine Merchants to Process (Data-Driven via G-Sheets) ────
     target_merchants = get_live_merchants(app_name="ShopeeFood", max_age_hours=24, merchant_filter=args.merchant)
+    
+    # Filter out completed merchants if --skip-existing is set
+    if args.skip_existing:
+        active_merchants = []
+        for m in target_merchants:
+            safe_merchant = m.replace(" ", "_")
+            import glob
+            pattern = os.path.join(report_dir, f"{safe_merchant}_*.xlsx")
+            matching_files = glob.glob(pattern)
+            matching_files = [f for f in matching_files if not os.path.basename(f).startswith("Master_") and not os.path.basename(f).startswith("0Master")]
+            if matching_files:
+                log.info(f"⏭️ [SKIP] Merchant '{m}' is already completed (Excel file exists).")
+            else:
+                active_merchants.append(m)
+        target_merchants = active_merchants
+        if not target_merchants:
+            log.info("⏭️ [SKIP] All merchants are already completed. Bypassing browser download phase.")
+            args.skip_download = True
+
     log.info(f"📋 [PROGRESS] Found {len(target_merchants)} live merchants ready to process.")
 
     if not target_merchants:

@@ -9,6 +9,7 @@
 import argparse
 import sys
 import os
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -114,7 +115,7 @@ def _resolve_output_dir(platform_name: str, start_date: str, end_date: str) -> s
     os.makedirs(out, exist_ok=True)
     return out
 
-def run_grab_vb(start_date: str, end_date: str, user_filter: str = None, outlet_filter: str = None, branch_filter: str = None):
+def run_grab_vb(start_date: str, end_date: str, user_filter: str = None, outlet_filter: str = None, branch_filter: str = None, skip_existing: bool = False):
     grab_dir = os.path.join(os.path.dirname(__file__), "grab")
     if not os.path.isdir(grab_dir):
         print(f"{RED}[ERROR]{RESET} Grab directory not found: {grab_dir}")
@@ -132,12 +133,13 @@ def run_grab_vb(start_date: str, end_date: str, user_filter: str = None, outlet_
     if user_filter: cmd.extend(["--user", user_filter])
     if outlet_filter: cmd.extend(["--outlet", outlet_filter])
     if branch_filter: cmd.extend(["--branch", branch_filter])
+    if skip_existing: cmd.append("--skip-existing")
 
     print(f"\n{GREEN}{BOLD}▶ GRAB VB PIPELINE{RESET}")
     result = subprocess.run(cmd, cwd=grab_dir)
     return result.returncode == 0
 
-def run_shopee_vb(start_date: str, end_date: str, merchant_filter: str = None):
+def run_shopee_vb(start_date: str, end_date: str, merchant_filter: str = None, skip_existing: bool = False):
     shopee_dir = os.path.join(os.path.dirname(__file__), "shopee")
     if not os.path.isdir(shopee_dir):
         print(f"{RED}[ERROR]{RESET} Shopee directory not found: {shopee_dir}")
@@ -153,6 +155,7 @@ def run_shopee_vb(start_date: str, end_date: str, merchant_filter: str = None):
         "--output-dir", output_dir,
     ]
     if merchant_filter: cmd.extend(["--merchant", merchant_filter])
+    if skip_existing: cmd.append("--skip-existing")
 
     print(f"\n{MAGENTA}{BOLD}▶ SHOPEE VB PIPELINE{RESET}")
     result = subprocess.run(cmd, cwd=shopee_dir)
@@ -380,24 +383,29 @@ def interactive_mode():
             print(f"  End      : {BOLD}{end_date}{RESET}")
             print(f"  {CYAN}{'─'*50}{RESET}")
             
+            skip_existing = False
             print(f"  {BOLD}Konfirmasi tindakan:{RESET}")
-            print(f"    {GREEN}[1]{RESET} Lanjutkan")
-            print(f"    {YELLOW}[2]{RESET} Kembali ke pemilihan tanggal")
-            print(f"    {RED}[3]{RESET} Batal dan Keluar")
+            print(f"    {GREEN}[1]{RESET} Lanjutkan (Semua)")
+            print(f"    {GREEN}[2]{RESET} Lanjutkan (Hanya yang belum diunduh/diproses)")
+            print(f"    {YELLOW}[3]{RESET} Kembali ke pemilihan tanggal")
+            print(f"    {RED}[4]{RESET} Batal dan Keluar")
             print()
             
-            confirm = input(f"  {BOLD}Pilihan (1/2/3):{RESET} ").strip()
+            confirm = input(f"  {BOLD}Pilihan (1/2/3/4):{RESET} ").strip()
             if confirm == "1":
                 break
             elif confirm == "2":
-                state = "date"
+                skip_existing = True
+                break
             elif confirm == "3":
+                state = "date"
+            elif confirm == "4":
                 print("  Dibatalkan.")
                 sys.exit(0)
             else:
                 print(f"  {RED}Pilihan tidak valid.{RESET}")
 
-    return platform, start_date, end_date, outlet, branch, shopee_merchant
+    return platform, start_date, end_date, outlet, branch, shopee_merchant, skip_existing
 
 def main():
     parser = argparse.ArgumentParser(description="VB Report — Unified Baseline Transaction Pipeline")
@@ -407,12 +415,14 @@ def main():
     parser.add_argument("--user", type=str, default=None, help="Filter specific username (Grab only)")
     parser.add_argument("--outlet", type=str, default=None, help="Filter specific outlet name")
     parser.add_argument("--branch", type=str, default=None, help="Filter specific branch name")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip already processed/downloaded outlets/merchants")
     args = parser.parse_args()
 
     load_dotenv()
 
+    skip_existing = False
     if args.platform is None or args.start is None or args.end is None:
-        platform, start_date, end_date, outlet, branch, shopee_merchant = interactive_mode()
+        platform, start_date, end_date, outlet, branch, shopee_merchant, skip_existing = interactive_mode()
     else:
         platform = args.platform.lower()
         start_date = args.start
@@ -420,6 +430,7 @@ def main():
         outlet = [args.outlet] if args.outlet else []
         branch = [args.branch] if args.branch else []
         shopee_merchant = [args.outlet] if args.outlet else []
+        skip_existing = args.skip_existing
         banner()
 
     start_date = normalize_date_string(start_date)
@@ -431,11 +442,11 @@ def main():
     if platform in ("grab", "all"):
         o_str = "|".join(outlet) if outlet else None
         b_str = "|".join(branch) if branch else None
-        results["Grab_VB"] = run_grab_vb(start_date, end_date, user_filter=args.user, outlet_filter=o_str, branch_filter=b_str)
+        results["Grab_VB"] = run_grab_vb(start_date, end_date, user_filter=args.user, outlet_filter=o_str, branch_filter=b_str, skip_existing=skip_existing)
 
     if platform in ("shopee", "all"):
         m_str = "|".join(shopee_merchant) if shopee_merchant else None
-        results["Shopee_VB"] = run_shopee_vb(start_date, end_date, merchant_filter=m_str)
+        results["Shopee_VB"] = run_shopee_vb(start_date, end_date, merchant_filter=m_str, skip_existing=skip_existing)
 
     elapsed = datetime.now() - start_time
     print(f"\n{CYAN}{BOLD}  SUMMARY{RESET}")

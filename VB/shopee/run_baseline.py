@@ -302,6 +302,33 @@ def process_portal(portal, global_ranges, report_dir):
 
 
 
+def is_portal_completed(portal, global_ranges, report_dir) -> bool:
+    history = _load_history()
+    for r in global_ranges:
+        start_str = datetime.fromtimestamp(r["start"]).strftime("%Y%m%d")
+        end_str   = datetime.fromtimestamp(r["end"]).strftime("%Y%m%d")
+        date_pattern = f"{start_str}_{end_str}"
+        h_key = _history_key(portal["account_name"], date_pattern)
+        
+        # Check history first
+        if h_key in history:
+            saved_path = history[h_key].get("path", "")
+            if saved_path and os.path.exists(saved_path):
+                continue
+                
+        # Storage check
+        safe_merchant = portal["merchant_name"].replace(" ", "_")
+        import glob
+        pattern = os.path.join(report_dir, f"{safe_merchant}_*.xlsx")
+        matching_files = glob.glob(pattern)
+        matching_files = [f for f in matching_files if not os.path.basename(f).startswith("Master_") and not os.path.basename(f).startswith("0Master")]
+        if matching_files:
+            continue
+            
+        return False
+    return True
+
+
 def run_pipeline():
     import argparse
     parser = argparse.ArgumentParser(description="Shopee Omzet VB Baseline Pipeline")
@@ -309,6 +336,7 @@ def run_pipeline():
     parser.add_argument("--end", type=str, help="End date (YYYY-MM-DD)", default=None)
     parser.add_argument("--output-dir", type=str, help="Override output directory for reports", default=None)
     parser.add_argument("--skip-download", action="store_true", help="Skip browser automation and only process/merge raw files in output directory")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip already processed portals/merchants")
     parser.add_argument("--merchant", type=str, help="Filter specific merchant name to run", default=None)
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode during session initialization")
     args = parser.parse_args()
@@ -336,7 +364,7 @@ def run_pipeline():
         # Default to last 7 days (including today)
         end_dt = now.replace(hour=23, minute=59, second=59)
         start_dt = (end_dt - timedelta(days=6)).replace(hour=0, minute=0, second=0)
-        label = f"{start_dt.strftime('%d %b %Y')} - {end_dt.strftime('%d %b %Y')} (Last 7 Days)"
+        label = f"{start_dt.strftime('%d %b %Y')} - {end_dt.strftime('%d %b %Y')}"
         
     global_ranges = [{"start": int(start_dt.timestamp()), "end": int(end_dt.timestamp()), "label": label}]
     
@@ -364,6 +392,19 @@ def run_pipeline():
         log.error(f"❌ No portal matches merchant filter: '{args.merchant}'")
         return
 
+    # Filter out completed portals if --skip-existing is set
+    if args.skip_existing:
+        active_portals = []
+        for p in portals_to_run:
+            if is_portal_completed(p, global_ranges, report_dir):
+                log.info(f"⏭️ [SKIP] Portal '{p['account_name']}' is already completed (Excel file exists).")
+            else:
+                active_portals.append(p)
+        portals_to_run = active_portals
+        if not portals_to_run:
+            log.info("⏭️ [SKIP] All portals are already completed. Bypassing browser download phase.")
+            args.skip_download = True
+
     log.info(f"📋 [PROGRESS] Found {len(portals_to_run)} portal(s) ready to process.")
 
     # Pre-run cleanup of old Excel files is disabled as per user request
@@ -389,8 +430,13 @@ def run_pipeline():
             headless_login = True
 
         log.info("🔑 Step 1: Checking and initializing portal sessions sequentially...")
-        # Run sequential session login/verification
-        sessions_ok = initialize_all_sessions(headless_on_login=headless_login)
+        # Pass only the account names that were selected by the merchant filter,
+        # so portals that were NOT selected are not initialized unnecessarily.
+        selected_account_names = [p["account_name"] for p in portals_to_run]
+        sessions_ok = initialize_all_sessions(
+            headless_on_login=headless_login,
+            only_portal=selected_account_names,
+        )
         if not sessions_ok:
             log.warning("⚠️ Some sessions are missing or expired. Continuing anyway but some tasks may fail.")
 

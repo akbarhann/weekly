@@ -13,11 +13,11 @@ import random
 from datetime import datetime
 from pathlib import Path
 
+import shutil
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -93,14 +93,22 @@ LOGOUT_KEYWORDS = ["log out", "logout", "keluar", "sign out", "signout"]
 def human_like_typing(element, text: str):
     element.send_keys(text)
 
-def _is_safe_to_click(element) -> bool:
+def get_all_cookies_dict(driver) -> dict:
+    return {c["name"]: c["value"] for c in driver.get_cookies()}
+
+def _trigger_and_extract_tokens(driver) -> tuple:
+    log.debug("  🔄 Triggering fresh token issuance...")
     try:
-        text = (element.text or "").strip().lower()
-        if not text:
-            text = (element.get_attribute("innerText") or "").strip().lower()
-        return not any(kw in text for kw in LOGOUT_KEYWORDS)
-    except Exception:
-        return True
+        try: driver.delete_cookie("shopee_tob_token")
+        except: pass
+        driver.get(TOKEN_TRIGGER_PAGE)
+        for _ in range(10):
+            tob_token, entity_id = extract_tokens_from_driver(driver)
+            if tob_token: return tob_token, entity_id
+            time.sleep(1)
+    except: pass
+    return extract_tokens_from_driver(driver)
+
 
 def _detect_and_recover_logout(driver) -> bool:
     current = driver.current_url.lower()
@@ -617,6 +625,55 @@ def _kill_zombie_chrome_processes(profile_dir: Path):
 
 # ── Driver Initialization ──────────────────────────────────────────────────────
 
+def _clean_chrome_profile_locks(account_name: str):
+    """
+    Removes stale Chrome lock files from the profile directory.
+    Chrome leaves behind 'SingletonLock', 'SingletonSocket', and 'SingletonCookie'
+    when it crashes — these prevent new instances from starting on the same profile.
+    """
+    import glob
+    script_dir = Path(__file__).parent.parent
+    profile_dir = script_dir / "data" / "chrome_profiles" / account_name
+    stale_locks = ["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"]
+    cleaned = []
+    for lock_name in stale_locks:
+        lock_path = profile_dir / lock_name
+        if lock_path.exists() or lock_path.is_symlink():
+            try:
+                lock_path.unlink()
+                cleaned.append(lock_name)
+            except Exception as ex:
+                log.debug(f"  ⚠️ Could not remove lock '{lock_name}': {ex}")
+    # Also remove per-profile SingletonLock inside the profile subdirectory
+    for sub_lock in glob.glob(str(profile_dir / f"profile_{account_name}" / "SingletonLock")):
+        try:
+            Path(sub_lock).unlink()
+            cleaned.append(f"profile/{Path(sub_lock).name}")
+        except Exception:
+            pass
+    if cleaned:
+        log.info(f"🧹 [BROWSER] Cleaned stale Chrome lock(s) for '{account_name}': {', '.join(cleaned)}")
+
+
+def _nuke_chrome_profile(account_name: str):
+    """
+    Last-resort recovery: completely wipes the Chrome profile directory for an account.
+    Used when lock-file cleanup alone cannot fix a corrupted profile that prevents
+    the renderer from connecting (SessionNotCreatedException). The next launch will
+    get a brand-new, clean profile and trigger a fresh browser login.
+    """
+    import shutil as _shutil
+    script_dir = Path(__file__).parent.parent
+    profile_dir = script_dir / "data" / "chrome_profiles" / account_name
+    if not profile_dir.exists():
+        return
+    try:
+        _shutil.rmtree(profile_dir)
+        log.warning(f"💣 [BROWSER] Nuked corrupt Chrome profile for '{account_name}' at: {profile_dir}")
+    except Exception as ex:
+        log.error(f"❌ [BROWSER] Could not wipe Chrome profile for '{account_name}': {ex}")
+
+
 def _init_driver(headless: bool, account_name: str = None):
     options = Options()
     options.add_argument("--log-level=3")
@@ -624,6 +681,11 @@ def _init_driver(headless: bool, account_name: str = None):
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    # Renderer stability flags — prevent renderer from crashing on profile re-use
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-ipc-flooding-protection")
+    options.add_argument("--renderer-process-limit=1")
     options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
     if headless:
         options.add_argument("--headless=new")
@@ -632,18 +694,9 @@ def _init_driver(headless: bool, account_name: str = None):
         options.add_argument("--start-maximized")
     
     script_dir = Path(__file__).parent.parent
-    if account_name:
-        set_session_file(get_session_file_path(account_name))
-        
-    if SESSION_FILE.stem == "session" or SESSION_FILE.stem == "session_default":
-        profile_dir = script_dir / "data" / "chrome_profile"
-        options.add_argument(f"--user-data-dir={profile_dir.resolve()}")
-        options.add_argument("--profile-directory=shopee_profile")
-    else:
-        acc_name = SESSION_FILE.stem.replace("session_", "")
-        profile_dir = script_dir / "data" / "chrome_profiles" / acc_name
-        options.add_argument(f"--user-data-dir={profile_dir.resolve()}")
-        options.add_argument(f"--profile-directory=profile_{acc_name}")
+    profile_dir = script_dir / "data" / "chrome_profiles" / account_name
+    options.add_argument(f"--user-data-dir={profile_dir.resolve()}")
+    options.add_argument(f"--profile-directory=profile_{account_name}")
 
     # Terminate leftover chrome processes that lock the profile
     _kill_zombie_chrome_processes(profile_dir)
@@ -1344,12 +1397,14 @@ def get_session(account_name: str = None, username: str = None, password: str = 
         if attempt > 0:
             run_headless_now = False
 
-        log.info(f"🌐 [BROWSER] Launching isolated browser (headless={run_headless_now}, attempt={attempt+1}/3)...")
-        driver = _init_driver(headless=run_headless_now)
+        log.info(f"🌐 [BROWSER] Launching isolated browser for '{account_name}' (headless={run_headless_now}, attempt={attempt+1}/3)...")
+        driver = _init_driver(headless=run_headless_now, account_name=account_name)
         wait = WebDriverWait(driver, 30)
         session_success = False
 
         try:
+            driver = _init_driver(headless=run_headless_now, account_name=account_name)
+            wait = WebDriverWait(driver, 30)
             driver.get(PARTNER_DASHBOARD)
             time.sleep(4)
             
@@ -1539,124 +1594,48 @@ def get_session(account_name: str = None, username: str = None, password: str = 
                 login_needed = False
                 run_headless_now = True
 
-            log.debug("實 Checking active merchant info via API...")
+            # Ensure we are on dashboard or settings to trigger tokens
+            if "/food/dashboard" not in driver.current_url:
+                driver.get(PARTNER_DASHBOARD)
+                time.sleep(2)
+
+            # --- DETECT UNKNOWN MERCHANT / STUCK DASHBOARD ---
             active_id = None
             active_name = "Unknown Merchant"
             try:
-                api_js = """
+                api_js = '''
                 var done = arguments[arguments.length - 1];
                 let token = document.cookie.split('; ').find(row => row.startsWith('shopee_tob_token='))?.split('=')[1];
                 fetch('https://api.partner.shopee.co.id/nb/mss/web-api/PartnerAccountServer/GetUserInfo', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-merchant-token': token || '',
-                        'x-merchant-language': 'id',
-                        'x-merchant-login-from': '12'
-                    },
-                    body: '{}',
+                    headers: { 'Content-Type': 'application/json', 'x-merchant-token': token || '' },
                     credentials: 'include'
                 })
                 .then(r => r.json())
                 .then(j => done(j.data || null))
                 .catch(() => done(null));
-                """
+                '''
                 driver.set_script_timeout(10)
                 user_data = driver.execute_async_script(api_js)
                 if user_data:
                     active_id = str(user_data.get("merchantId") or "")
                     active_name = user_data.get("merchantName") or "Unknown Merchant"
             except: pass
-
-            if not active_id or active_id == "None":
-                try:
-                    log.debug("  ⏳ Menunggu sinkronisasi UI merchant (Maks 10 detik)...")
-                    def get_ui_name(d):
-                        try:
-                            t = d.find_element(By.CLASS_NAME, "merchantName").text.strip()
-                            return t if t else False
-                        except: return False
-                            
-                    ui_name = WebDriverWait(driver, 10).until(get_ui_name)
-                    if ui_name:
-                        active_name = ui_name
-                        api_response_path = Path(__file__).resolve().parent.parent / "API" / "response.json"
-                        if not api_response_path.exists():
-                            api_response_path = Path(__file__).resolve().parent.parent.parent / "src" / "shopee-omzet-automation" / "API" / "response.json"
-                        with open(api_response_path, "r") as f:
-                            m_data = json.load(f)
-                            for m in m_data.get("data", {}).get("selectMerchant", {}).get("merchantList", []):
-                                if m["merchantName"].lower() == ui_name.lower():
-                                    active_id = str(m["merchantId"])
-                                    log.info(f"📍 [MERCHANT] Detected UI: {active_name} (ID: {active_id})")
-                                    break
-                except: pass
-
-            if not active_id:
-                _, active_id = extract_tokens_from_driver(driver)
             
-            do_switch = False
-            if target_name:
-                if active_name.lower() != target_name.lower():
-                    log.info(f"📍 [MERCHANT] Current: {active_name} | Target: {target_name}. Switching...")
-                    do_switch = True
-                elif not active_id or active_id == "None":
-                    log.info(f"⚠️ [MERCHANT] Target is {active_name}, but active_id is missing! Forcing switch...")
-                    do_switch = True
-                else:
-                    log.info(f"✅ [MERCHANT] Already as target: {active_name}")
-            else:
-                is_invalid_name = (
-                    not active_name or
-                    active_name.lower().strip() == "unknown merchant" or
-                    active_name.lower().strip() == "admin"
+            if active_name == "Unknown Merchant":
+                log.info(f"🔄 [SESSION] Unknown merchant detected for '{account_name}' — initiating logout/relogin recovery...")
+                recovered = _deliberate_logout_and_relogin(
+                    driver,
+                    username=username,
+                    password=password,
+                    phone=phone,
                 )
-                if active_id and active_id != "None" and not is_invalid_name:
-                    log.info(f"📍 [MERCHANT] Current: {active_name} (ID: {active_id})")
-                    do_switch = False
+                if not recovered:
+                    log.warning(f"⚠️ [SESSION] Recovery failed for '{account_name}'. Will attempt token extraction anyway.")
                 else:
-                    log.info(f"📍 [MERCHANT] Invalid active merchant (Name: {active_name}, ID: {active_id}). Switching...")
-                    do_switch = True
+                    log.info(f"✅ [SESSION] Successfully recovered clean session for '{account_name}'.")
 
-            if do_switch:
-                if target_name:
-                    success = auto_switch_merchant(driver, target_name, is_retry=(attempt == 2))
-                    if not success:
-                        log.warning(f"⚠️ [MERCHANT] auto_switch_merchant failed for target {target_name}. Initiating recovery...")
-                        recovered = _deliberate_logout_and_relogin(
-                            driver,
-                            username=username,
-                            password=password,
-                            phone=phone,
-                        )
-                        if recovered:
-                            log.info("🔄 [MERCHANT] Recovery successful. Retrying merchant switch...")
-                            success = auto_switch_merchant(driver, target_name, is_retry=(attempt == 2))
-                        else:
-                            log.error("❌ Recovery failed.")
-                            success = False
-                else:
-                    log.info("🔄 [MERCHANT] Unknown/Admin/Missing merchant — initiating logout/relogin recovery...")
-                    recovered = _deliberate_logout_and_relogin(
-                        driver,
-                        username=username,
-                        password=password,
-                        phone=phone,
-                    )
-                    if recovered:
-                        success = _handle_merchant_selection(driver, active_id_forced=None, interactive=interactive)
-                    else:
-                        log.error("❌ Logout/relogin recovery failed.")
-                        success = False
-                if not success:
-                    log.error("❌ Merchant selection failed.")
-                    driver.quit()
-                    continue
-            else:
-                if "/food/dashboard" not in driver.current_url:
-                    driver.get(PARTNER_DASHBOARD)
-                    time.sleep(2)
-
+            # 3. Final Token Extraction
             t, eid = _trigger_and_extract_tokens(driver)
             if not eid and active_id and active_id != "None":
                 log.info(f"⚠️ [SESSION] Token extraction returned empty entity_id. Using fallback active_id: {active_id}")
@@ -1675,11 +1654,7 @@ def get_session(account_name: str = None, username: str = None, password: str = 
             return res
 
         except Exception as e:
-            err_msg = str(e)
-            log.error(f"Browser session error on attempt {attempt+1}: {err_msg}")
-            if "MERCHANT_NOT_FOUND" in err_msg:
-                log.error("❌ Fatal Error: Merchant belum ditambahkan. Membatalkan antrean tanpa login ulang.")
-                raise e
+            log.error(f"❌ [BROWSER] Session error for '{account_name}' on attempt {attempt+1}: {e}")
         finally:
             if (close_browser or not session_success) and driver is not None:
                 try: driver.quit()
