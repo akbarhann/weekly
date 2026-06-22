@@ -913,7 +913,7 @@ module.exports = {
                     });
 
                     if (result.status === 'back') {
-                        step = 'period';
+                        step = 'scope';
                         lastInteraction = result.lastInteraction;
                         continue;
                     }
