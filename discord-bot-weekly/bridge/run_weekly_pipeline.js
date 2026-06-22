@@ -153,12 +153,16 @@ function runWeeklyPipeline(formData, onLog = () => { }) {
         if (user) {
             args.push('--user', user);
         }
+        if (formData.skipExisting) {
+            args.push('--skip-existing');
+        }
 
         onLog(`🚀 Menjalankan: \`${PYTHON_EXE} cli.py ${args.slice(1).join(' ')}\``);
         onLog(`📦 Platform: **${platform.toUpperCase()}** | Tanggal: **${startDate}** s/d **${endDate}**`);
         if (outlet) onLog(`📍 Outlet: **${outlet}**`);
         if (branch) onLog(`🌿 Cabang: **${branch}**`);
         if (user) onLog(`👤 User: **${user}**`);
+        if (formData.skipExisting) onLog(`⏭️ Mode: **Skip Existing (Hanya yang belum)**`);
 
         let output = '';
 

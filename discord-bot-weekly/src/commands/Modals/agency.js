@@ -191,6 +191,7 @@ const makeProgressEmbed = (currentStepName, title, description, fields = [], has
         }
     }
     allSteps.push({ name: 'Periode', icon: '📅' });
+    allSteps.push({ name: 'Konfirmasi', icon: '📋' });
 
     let progressStr = '';
     const currentStepIdx = allSteps.findIndex(s => s.name === currentStepName);
@@ -407,6 +408,7 @@ module.exports = {
             let startDate = '';
             let endDate = '';
             let finalInteraction = null;
+            let skipExisting = false;
 
             while (true) {
                 if (step === 'aplikator') {
@@ -800,7 +802,96 @@ module.exports = {
 
                     startDate = periodResults.start;
                     endDate = periodResults.end;
-                    finalInteraction = periodResults.lastInteract;
+                    lastInteraction = periodResults.lastInteract;
+                    step = 'confirmation';
+                    continue;
+                } else if (step === 'confirmation') {
+                    const currentFields = [
+                        { name: 'Tipe', value: 'AGENCY', inline: true },
+                        { name: 'Platform', value: platform.toUpperCase(), inline: true },
+                        { name: 'Cakupan', value: (scope === 'select_merchant') ? `Merchant Terpilih (${selectedOutlets.length})` : 'Semua Outlet', inline: true },
+                        { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true }
+                    ];
+
+                    const getConfirmEmbed = () => {
+                        return makeProgressEmbed(
+                            'Konfirmasi',
+                            '📋 Konfirmasi Pipeline',
+                            'Silakan pilih mode untuk menjalankan pipeline weekly:\n\n' +
+                            '🟢 **Jalankan Semua**: Memproses ulang seluruh outlet tanpa terkecuali.\n' +
+                            '🟠 **Lewati yang Sudah Ada**: Hanya memproses outlet yang belum selesai atau belum terunduh laporannya di server.',
+                            currentFields,
+                            (scope === 'select_merchant'),
+                            platform === 'all'
+                        );
+                    };
+
+                    const getConfirmComponents = () => {
+                        return [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('agency_confirm_all_btn')
+                                    .setLabel('🟢 Jalankan Semua')
+                                    .setStyle(ButtonStyle.Success),
+                                new ButtonBuilder()
+                                    .setCustomId('agency_confirm_skip_btn')
+                                    .setLabel('🟠 Lewati yang Sudah Ada')
+                                    .setStyle(ButtonStyle.Primary),
+                                new ButtonBuilder()
+                                    .setCustomId('agency_back_btn')
+                                    .setLabel('⬅️ Kembali')
+                                    .setStyle(ButtonStyle.Secondary)
+                            )
+                        ];
+                    };
+
+                    await lastInteraction.update({
+                        embeds: [getConfirmEmbed()],
+                        components: getConfirmComponents()
+                    });
+
+                    const confirmMsg = lastInteraction.message || await lastInteraction.fetchReply();
+
+                    const getConfirmChoice = () => {
+                        return new Promise((resolveConfirm, rejectConfirm) => {
+                            const collector = confirmMsg.createMessageComponentCollector({
+                                filter: i => i.user.id === interaction.user.id && ['agency_confirm_all_btn', 'agency_confirm_skip_btn', 'agency_back_btn'].includes(i.customId),
+                                time: 300000
+                            });
+
+                            collector.on('collect', async i => {
+                                if (i.customId === 'agency_back_btn') {
+                                    collector.stop('back');
+                                    resolveConfirm({ status: 'back', lastInteract: i });
+                                    return;
+                                }
+
+                                const skip = i.customId === 'agency_confirm_skip_btn';
+                                collector.stop('confirmed');
+                                resolveConfirm({
+                                    status: 'confirmed',
+                                    skipExisting: skip,
+                                    lastInteract: i
+                                });
+                            });
+
+                            collector.on('end', (collected, reason) => {
+                                if (reason !== 'confirmed' && reason !== 'back') {
+                                    rejectConfirm(new Error('Timeout atau dibatalkan'));
+                                }
+                            });
+                        });
+                    };
+
+                    const confirmResults = await getConfirmChoice();
+                    if (confirmResults.status === 'back') {
+                        lastInteraction = confirmResults.lastInteract;
+                        step = 'period';
+                        continue;
+                    }
+
+                    skipExisting = confirmResults.skipExisting;
+                    finalInteraction = confirmResults.lastInteract;
                     break;
                 }
             }
@@ -870,6 +961,7 @@ module.exports = {
                 outlet: outletStr,
                 branch: '',
                 user: '',
+                skipExisting: skipExisting,
                 channelId: interaction.channelId
             };
 
