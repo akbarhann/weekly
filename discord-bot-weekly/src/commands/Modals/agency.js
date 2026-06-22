@@ -605,6 +605,201 @@ module.exports = {
                     lastInteraction = result.lastInteraction;
                     step = 'period';
 
+                } else if (step === 'period') {
+                    const today = new Date();
+                    const dayOfWeek = today.getDay();
+                    const daysToLastSunday = dayOfWeek === 0 ? 7 : dayOfWeek;
+                    const lastSunday = new Date(today);
+                    lastSunday.setDate(today.getDate() - daysToLastSunday);
+                    const lastMonday = new Date(lastSunday);
+                    lastMonday.setDate(lastSunday.getDate() - 6);
+
+                    const formatDateDisplay = (d) => {
+                        const day = String(d.getDate()).padStart(2, '0');
+                        const month = String(d.getMonth() + 1).padStart(2, '0');
+                        const year = d.getFullYear();
+                        return `${day}-${month}-${year}`;
+                    };
+
+                    const defaultStartDisp = formatDateDisplay(lastMonday);
+                    const defaultEndDisp = formatDateDisplay(lastSunday);
+
+                    const defaultStartISO = toISOFormat(lastMonday);
+                    const defaultEndISO = toISOFormat(lastSunday);
+
+                    const currentFields = [
+                        { name: 'Tipe', value: 'AGENCY', inline: true },
+                        { name: 'Platform', value: platform.toUpperCase(), inline: true }
+                    ];
+
+                    let errorMsg = null;
+
+                    const getPeriodEmbed = () => {
+                        let desc = 'Silakan pilih **📅 7 Hari Penuh (Senin-Minggu)**, atau klik **⚙️ Custom Date Range** untuk menentukan rentang tanggal secara manual.';
+                        if (errorMsg) {
+                            desc = `❌ **Error:** ${errorMsg}\n\n` + desc;
+                        }
+                        return makeProgressEmbed('Periode', '📅 Pilih Periode Laporan', desc, currentFields, false, platform === 'all');
+                    };
+
+                    const getPeriodComponents = () => {
+                        return [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('agency_shortcut_7_days_btn')
+                                    .setLabel(`📅 7 Hari Penuh (${defaultStartDisp} s/d ${defaultEndDisp})`)
+                                    .setStyle(ButtonStyle.Success),
+                                new ButtonBuilder()
+                                    .setCustomId('agency_open_date_modal_btn')
+                                    .setLabel('⚙️ Custom Date Range')
+                                    .setStyle(ButtonStyle.Secondary),
+                                new ButtonBuilder()
+                                    .setCustomId('agency_back_btn')
+                                    .setLabel('⬅️ Kembali')
+                                    .setStyle(ButtonStyle.Secondary)
+                            )
+                        ];
+                    };
+
+                    await lastInteraction.update({
+                        embeds: [getPeriodEmbed()],
+                        components: getPeriodComponents()
+                    });
+
+                    const periodMsg = lastInteraction.message || await lastInteraction.fetchReply();
+
+                    const getPeriodChoice = () => {
+                        return new Promise((resolvePeriod, rejectPeriod) => {
+                            const collector = periodMsg.createMessageComponentCollector({
+                                filter: i => i.user.id === interaction.user.id && ['agency_shortcut_7_days_btn', 'agency_open_date_modal_btn', 'agency_back_btn'].includes(i.customId),
+                                time: 300000
+                            });
+
+                            collector.on('collect', async i => {
+                                if (i.customId === 'agency_back_btn') {
+                                    collector.stop('back');
+                                    resolvePeriod({
+                                        status: 'back',
+                                        lastInteract: i
+                                    });
+                                    return;
+                                }
+
+                                if (i.customId === 'agency_shortcut_7_days_btn') {
+                                    collector.stop('confirmed');
+                                    resolvePeriod({
+                                        status: 'confirmed',
+                                        start: defaultStartISO,
+                                        end: defaultEndISO,
+                                        lastInteract: i
+                                    });
+                                    return;
+                                }
+
+                                // Jika klik custom date, tampilkan modal
+                                const modalId = `agency_date_modal_${Date.now()}`;
+                                const dateModal = new ModalBuilder()
+                                    .setCustomId(modalId)
+                                    .setTitle('Rentang Tanggal Custom');
+
+                                const startInput = new TextInputBuilder()
+                                    .setCustomId('start_date_input')
+                                    .setLabel('TANGGAL MULAI (DD-MM-YYYY)')
+                                    .setStyle(TextInputStyle.Short)
+                                    .setPlaceholder('Contoh: 01-06-2026')
+                                    .setMinLength(10)
+                                    .setMaxLength(10)
+                                    .setRequired(true);
+
+                                const endInput = new TextInputBuilder()
+                                    .setCustomId('end_date_input')
+                                    .setLabel('TANGGAL SELESAI (DD-MM-YYYY)')
+                                    .setStyle(TextInputStyle.Short)
+                                    .setPlaceholder('Contoh: 07-06-2026')
+                                    .setMinLength(10)
+                                    .setMaxLength(10)
+                                    .setRequired(true);
+
+                                dateModal.addComponents(
+                                    new ActionRowBuilder().addComponents(startInput),
+                                    new ActionRowBuilder().addComponents(endInput)
+                                );
+
+                                await i.showModal(dateModal);
+
+                                try {
+                                    const modalSubmit = await i.awaitModalSubmit({
+                                        filter: mi => mi.user.id === interaction.user.id && mi.customId === modalId,
+                                        time: 120000
+                                    });
+
+                                    const startDateStr = modalSubmit.fields.getTextInputValue('start_date_input').trim();
+                                    const endDateStr = modalSubmit.fields.getTextInputValue('end_date_input').trim();
+
+                                    const dateRegex = /^\d{2}-\d{2}-\d{4}$/;
+                                    if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
+                                        errorMsg = 'Format tanggal salah. Gunakan format DD-MM-YYYY (contoh: 01-06-2026).';
+                                        await modalSubmit.update({
+                                            embeds: [getPeriodEmbed()],
+                                            components: getPeriodComponents()
+                                        });
+                                        return;
+                                    }
+
+                                    const parsedStart = parseDate(startDateStr);
+                                    const parsedEnd = parseDate(endDateStr);
+
+                                    if (!parsedStart || !parsedEnd) {
+                                        errorMsg = 'Tanggal tidak ada di kalender (contoh: 31 Februari).';
+                                        await modalSubmit.update({
+                                            embeds: [getPeriodEmbed()],
+                                            components: getPeriodComponents()
+                                        });
+                                        return;
+                                    }
+
+                                    if (parsedStart > parsedEnd) {
+                                        errorMsg = 'Tanggal mulai tidak boleh melebihi tanggal selesai.';
+                                        await modalSubmit.update({
+                                            embeds: [getPeriodEmbed()],
+                                            components: getPeriodComponents()
+                                        });
+                                        return;
+                                    }
+
+                                    collector.stop('confirmed');
+                                    resolvePeriod({
+                                        status: 'confirmed',
+                                        start: toISOFormat(parsedStart),
+                                        end: toISOFormat(parsedEnd),
+                                        lastInteract: modalSubmit
+                                    });
+                                } catch (err) {
+                                    console.error('Error awaiting modal submit:', err);
+                                }
+                            });
+
+                            collector.on('end', (collected, reason) => {
+                                if (reason !== 'confirmed' && reason !== 'back') {
+                                    rejectPeriod(new Error('Timeout atau dibatalkan'));
+                                }
+                            });
+                        });
+                    };
+
+                    const periodResults = await getPeriodChoice();
+                    if (periodResults.status === 'back') {
+                        lastInteraction = periodResults.lastInteract;
+                        step = 'aplikator';
+                        continue;
+                    }
+
+                    startDate = periodResults.start;
+                    endDate = periodResults.end;
+                    lastInteraction = periodResults.lastInteract;
+                    step = 'scope';
+                    continue;
+
                 } else if (step === 'scope') {
                     const result = await askSelection(lastInteraction, {
                         stepName: 'Cakupan',
