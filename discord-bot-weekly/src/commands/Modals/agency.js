@@ -38,7 +38,7 @@ let activeWeeklyProcess = null;
 // GSheets caching specifically for weekly merchants (gid=0)
 let cachedWeeklySheetData = null;
 let lastWeeklyCacheTime = 0;
-const WEEKLY_CACHE_DURATION = 30 * 1000; // 30 seconds cache
+const WEEKLY_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes cache
 
 function resolveShopeeMerchant(outletName) {
     if (!cachedWeeklySheetData) return outletName;

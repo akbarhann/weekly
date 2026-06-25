@@ -40,7 +40,7 @@ let cachedVBGrabData = null;
 let cachedVBShopeeData = null;
 let lastVBGrabCacheTime = 0;
 let lastVBShopeeCacheTime = 0;
-const VB_CACHE_DURATION = 30 * 1000; // 30 seconds cache
+const VB_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes cache
 
 function isOutletDownloaded(target, platform, startDate, endDate, outletName) {
     const WEEKLY_DIR = getWeeklyTargetDir(target);
