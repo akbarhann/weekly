@@ -528,55 +528,74 @@ def main():
     parser.add_argument("--skip-existing", action="store_true", help="Skip already processed/downloaded outlets/merchants")
     args = parser.parse_args()
 
-    load_dotenv()
+    # ── Double-run prevention using filelock ──
+    try:
+        from filelock import FileLock, Timeout
+    except ImportError:
+        import contextlib
+        class Timeout(Exception): pass
+        @contextlib.contextmanager
+        def FileLock(*args, **kwargs):
+            yield
 
-    skip_existing = False
-    if args.platform is None or args.start is None or args.end is None:
-        platform, start_date, end_date, outlet, branch, shopee_merchant, skip_existing = interactive_mode()
-    else:
-        platform = args.platform.lower()
-        start_date = args.start
-        end_date = args.end
-        branch = [x.strip() for x in args.branch.split("|")] if args.branch else []
-        
-        # Handle separate outlet filters if provided
-        if args.grab_outlet or args.shopee_merchant:
-            outlet = [x.strip() for x in args.grab_outlet.split("|")] if args.grab_outlet else []
-            raw_shopee = [x.strip() for x in args.shopee_merchant.split("|")] if args.shopee_merchant else []
-            shopee_merchant = []
-            for s in raw_shopee:
-                shopee_merchant.append(_resolve_shopee_merchant(s, branch_name=args.branch))
-        else:
-            outlet = [x.strip() for x in args.outlet.split("|")] if args.outlet else []
-            shopee_merchant = []
-            if args.outlet:
-                for o in outlet:
-                    shopee_merchant.append(_resolve_shopee_merchant(o, branch_name=args.branch))
-                    
-        skip_existing = args.skip_existing
-        banner()
+    lock_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cli_weekly.lock")
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    lock = FileLock(lock_path, timeout=1)
 
-    start_date = normalize_date_string(start_date)
-    end_date = normalize_date_string(end_date)
+    try:
+        with lock:
+            load_dotenv()
 
-    results = {}
-    start_time = datetime.now()
+            skip_existing = False
+            if args.platform is None or args.start is None or args.end is None:
+                platform, start_date, end_date, outlet, branch, shopee_merchant, skip_existing = interactive_mode()
+            else:
+                platform = args.platform.lower()
+                start_date = args.start
+                end_date = args.end
+                branch = [x.strip() for x in args.branch.split("|")] if args.branch else []
+                
+                # Handle separate outlet filters if provided
+                if args.grab_outlet or args.shopee_merchant:
+                    outlet = [x.strip() for x in args.grab_outlet.split("|")] if args.grab_outlet else []
+                    raw_shopee = [x.strip() for x in args.shopee_merchant.split("|")] if args.shopee_merchant else []
+                    shopee_merchant = []
+                    for s in raw_shopee:
+                        shopee_merchant.append(_resolve_shopee_merchant(s, branch_name=args.branch))
+                else:
+                    outlet = [x.strip() for x in args.outlet.split("|")] if args.outlet else []
+                    shopee_merchant = []
+                    if args.outlet:
+                        for o in outlet:
+                            shopee_merchant.append(_resolve_shopee_merchant(o, branch_name=args.branch))
+                            
+                skip_existing = args.skip_existing
+                banner()
 
-    if platform in ("grab", "all"):
-        o_str = "|".join(outlet) if outlet else None
-        b_str = "|".join(branch) if branch else None
-        results["Grab"] = run_grab(start_date, end_date, user_filter=args.user, outlet_filter=o_str, branch_filter=b_str, skip_existing=skip_existing)
+            start_date = normalize_date_string(start_date)
+            end_date = normalize_date_string(end_date)
 
-    if platform in ("shopee", "all"):
-        m_str = "|".join(shopee_merchant) if shopee_merchant else None
-        results["Shopee"] = run_shopee(start_date, end_date, merchant_filter=m_str, skip_existing=skip_existing)
+            results = {}
+            start_time = datetime.now()
 
-    elapsed = datetime.now() - start_time
-    print(f"\n{CYAN}{BOLD}  SUMMARY{RESET}")
-    print(f"  Duration: {int(elapsed.total_seconds() // 60)}m {int(elapsed.total_seconds() % 60)}s")
-    for name, success in results.items():
-        status = f"{GREEN}✓ SUCCESS{RESET}" if success else f"{RED}✗ FAILED{RESET}"
-        print(f"  {name:10s} : {status}")
+            if platform in ("grab", "all"):
+                o_str = "|".join(outlet) if outlet else None
+                b_str = "|".join(branch) if branch else None
+                results["Grab"] = run_grab(start_date, end_date, user_filter=args.user, outlet_filter=o_str, branch_filter=b_str, skip_existing=skip_existing)
+
+            if platform in ("shopee", "all"):
+                m_str = "|".join(shopee_merchant) if shopee_merchant else None
+                results["Shopee"] = run_shopee(start_date, end_date, merchant_filter=m_str, skip_existing=skip_existing)
+
+            elapsed = datetime.now() - start_time
+            print(f"\n{CYAN}{BOLD}  SUMMARY{RESET}")
+            print(f"  Duration: {int(elapsed.total_seconds() // 60)}m {int(elapsed.total_seconds() % 60)}s")
+            for name, success in results.items():
+                status = f"{GREEN}✓ SUCCESS{RESET}" if success else f"{RED}✗ FAILED{RESET}"
+                print(f"  {name:10s} : {status}")
+    except Timeout:
+        print(f"\n{RED}❌ Gagal menjalankan script: Proses Weekly Agency lainnya sedang berjalan.{RESET}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

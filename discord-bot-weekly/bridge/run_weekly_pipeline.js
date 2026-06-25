@@ -48,6 +48,26 @@ const OFD_JOB_LOCK_PATH = path.join(
 
 function acquireJobLock(onLog = console.log) {
     try {
+        if (fs.existsSync(OFD_JOB_LOCK_PATH)) {
+            try {
+                const lockData = JSON.parse(fs.readFileSync(OFD_JOB_LOCK_PATH, 'utf8'));
+                // Cek apakah proses dengan PID tersebut benar-benar masih aktif berjalan
+                process.kill(lockData.pid, 0);
+                const errMsg = `Proses lain (PID: ${lockData.pid}) sedang berjalan sejak ${lockData.startedAt}.`;
+                throw new Error(errMsg);
+            } catch (e) {
+                if (e.code === 'EPERM') {
+                    const errMsg = `Proses lain sedang berjalan dengan hak akses berbeda (EPERM).`;
+                    throw new Error(errMsg);
+                }
+                // Jika error.code === 'ESRCH', proses sudah tidak ada (stale lock). Hapus file lock lama.
+                if (e.code === 'ESRCH') {
+                    try { fs.unlinkSync(OFD_JOB_LOCK_PATH); } catch (_) {}
+                } else if (e.message.includes('sedang berjalan')) {
+                    throw e;
+                }
+            }
+        }
         fs.mkdirSync(path.dirname(OFD_JOB_LOCK_PATH), { recursive: true });
         fs.writeFileSync(
             OFD_JOB_LOCK_PATH,
@@ -56,7 +76,8 @@ function acquireJobLock(onLog = console.log) {
         );
         onLog(`🔒 [JOB LOCK] Acquired: ${OFD_JOB_LOCK_PATH}`);
     } catch (err) {
-        onLog(`⚠️ [JOB LOCK] Gagal menulis lock file: ${err.message}`);
+        onLog(`⚠️ [JOB LOCK] Gagal memperoleh lock: ${err.message}`);
+        throw err;
     }
 }
 
@@ -124,7 +145,15 @@ function runWeeklyPipeline(formData, onLog = () => { }) {
         const CLI_PATH = path.join(WEEKLY_DIR, 'cli.py');
 
         // 1. Acquire job lock + Pause warmer sebelum memulai pipeline
-        acquireJobLock(onLog);
+        try {
+            acquireJobLock(onLog);
+        } catch (lockErr) {
+            return resolve({
+                success: false,
+                exitCode: -1,
+                output: `Gagal memperoleh lock: ${lockErr.message}`
+            });
+        }
         await controlWarmer('pause', onLog);
 
         const env = {
