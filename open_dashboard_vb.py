@@ -47,10 +47,6 @@ def autofill_login_form(driver, cred, name):
             except:
                 continue
         
-        if user_input:
-            user_input.send_keys(Keys.CONTROL + "a", Keys.BACKSPACE)
-            user_input.send_keys(cred["username"])
-            
         pass_input = None
         for sel in ["input[type='password']", "input[placeholder='Password']"]:
             try:
@@ -60,11 +56,87 @@ def autofill_login_form(driver, cred, name):
                     break
             except:
                 continue
-                
-        if pass_input:
-            pass_input.send_keys(Keys.CONTROL + "a", Keys.BACKSPACE)
-            pass_input.send_keys(cred["password"])
+
+        # Fill via React prototype setter to ensure framework state synchronization
+        if user_input:
+            driver.execute_script("""
+                var el = arguments[0];
+                var val = arguments[1];
+                el.focus();
+                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                setter.call(el, val);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            """, user_input, cred["username"])
             
+        if pass_input:
+            driver.execute_script("""
+                var el = arguments[0];
+                var val = arguments[1];
+                el.focus();
+                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                setter.call(el, val);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            """, pass_input, cred["password"])
+
+        time.sleep(0.5)
+
+        # Native click and keypress simulation fallback
+        if user_input:
+            try:
+                user_input.click()
+                time.sleep(0.2)
+                user_input.send_keys(Keys.END)
+                user_input.send_keys(Keys.BACKSPACE)
+                user_input.send_keys(cred["username"][-1])
+                time.sleep(0.2)
+            except:
+                pass
+
+        if pass_input:
+            try:
+                pass_input.click()
+                time.sleep(0.2)
+                pass_input.send_keys(Keys.END)
+                pass_input.send_keys(Keys.BACKSPACE)
+                pass_input.send_keys(cred["password"][-1])
+                time.sleep(0.2)
+            except:
+                pass
+
+        # Trigger blur on both to finalize validation
+        try:
+            driver.execute_script("""
+                if (arguments[0]) arguments[0].blur();
+                if (arguments[1]) arguments[1].blur();
+            """, user_input, pass_input)
+        except:
+            pass
+        time.sleep(0.5)
+
+        # CRITICAL: React validation requires actual user interaction events
+        # Click and focus the fields sequentially to activate the disabled login button.
+        try:
+            for field in [user_input, pass_input, user_input]:
+                if field:
+                    driver.execute_script("""
+                        var el = arguments[0];
+                        el.focus();
+                        el.click();
+                        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                        el.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    """, field)
+                    time.sleep(0.2)
+        except Exception as e:
+            log.warning(f"⚠️ Failed to dispatch interaction events for '{name}': {e}")
+
         # Click login button
         login_btn = None
         for btn_sel in ["//button[contains(., 'Masuk') or contains(., 'Log In')]", "//button[@type='submit']"]:
@@ -78,7 +150,18 @@ def autofill_login_form(driver, cred, name):
                 
         if login_btn:
             log.info(f"👉 Mengeklik tombol login untuk VB '{name}'...")
-            login_btn.click()
+            try:
+                driver.execute_script("""
+                    var btn = arguments[0];
+                    if (btn.hasAttribute('disabled')) {
+                        btn.removeAttribute('disabled');
+                        btn.classList.remove('ant-btn-loading', 'disabled');
+                    }
+                """, login_btn)
+                time.sleep(0.2)
+                login_btn.click()
+            except:
+                driver.execute_script("arguments[0].click();", login_btn)
     except Exception as autofill_err:
         log.warning(f"⚠️ Gagal mengisi otomatis credentials/login untuk '{name}': {autofill_err}")
 
@@ -128,6 +211,102 @@ def monitor_and_save_session(driver, name, target_merchant):
             # Browser was closed
             break
 
+def handle_post_login_flow(driver, name, target_merchant):
+    log.info(f"⏳ Memantau status login dan redirect untuk VB '{name}'...")
+    wait = WebDriverWait(driver, 15)
+    start_time = time.time()
+    
+    # Wait up to 60 seconds for login redirect / flow completion
+    while time.time() - start_time < 60:
+        try:
+            curr_url = driver.current_url.lower()
+            
+            # If we successfully land on dashboard, let's check the merchant
+            if "/food/dashboard" in curr_url:
+                log.info(f"✅ VB '{name}' berhasil masuk dashboard.")
+                break
+                
+            # If we land on onboarding or merchant-selector
+            if "onboarding" in curr_url or "merchant-selector" in curr_url:
+                log.info(f"📍 VB '{name}' mendeteksi halaman selector/onboarding. Memilih merchant pertama...")
+                time.sleep(2)
+                
+                # Check for "Gabung" invitation button first
+                try:
+                    btn_xpath = "//button[contains(., 'Gabung dengan Merchant') or contains(., 'Gabung') or contains(text(), 'Gabung')]"
+                    btns = driver.find_elements(By.XPATH, btn_xpath)
+                    clicked_inv = False
+                    for btn in btns:
+                        if btn.is_displayed():
+                            btn.click()
+                            log.info(f"👉 Mengklik tombol 'Gabung' untuk VB '{name}'")
+                            time.sleep(5)
+                            clicked_inv = True
+                            break
+                    if clicked_inv:
+                        continue
+                except Exception as e:
+                    log.debug(f"Error checking Gabung button: {e}")
+                
+                # Select first merchant in list
+                bypass_js = """
+                    var loaders = document.querySelectorAll('.ant-spin, [class*="loading"], .shopee-loading, .ant-spin-nested-loading');
+                    loaders.forEach(el => el.remove());
+                    var target = document.querySelector('.listItem, .merchant-item, li[class*="item"], [class*="merchant-item"], .ant-list-item');
+                    if (target) {
+                        target.scrollIntoView({block: 'center'});
+                        try { target.click(); } catch(e) {}
+                        var clickEvent = new MouseEvent('click', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window
+                        });
+                        target.dispatchEvent(clickEvent);
+                        return true;
+                    }
+                    return false;
+                """
+                try:
+                    if driver.execute_script(bypass_js):
+                        log.info(f"✅ VB '{name}' berhasil memicu pemilihan merchant pertama.")
+                        time.sleep(5)
+                except Exception as e:
+                    log.warning(f"⚠️ Gagal klik merchant pertama untuk VB '{name}': {e}")
+                
+            # Click "Lanjutkan" or "Continue" if visible
+            try:
+                btn_el = driver.find_element(By.XPATH, "//button[contains(., 'Lanjutkan') or contains(., 'Continue')] | //*[text()='Lanjutkan' or text()='Continue']")
+                if btn_el.is_displayed():
+                    log.info(f"👉 VB '{name}' menemukan tombol 'Lanjutkan', mengklik...")
+                    try:
+                        btn_el.click()
+                    except:
+                        driver.execute_script("arguments[0].click();", btn_el)
+                    time.sleep(2)
+            except:
+                pass
+                
+            # Check for OTP input page, if so warn user
+            otp_present = False
+            try:
+                otp_present = driver.execute_script("""
+                    var has_otp = !!document.querySelector("input[maxlength='6'], .shopee-otp-input, input.shopee-otp-input__input");
+                    var body = (document.body.innerText || "").toLowerCase();
+                    return has_otp || body.includes("otp") || body.includes("verifikasi") || body.includes("verification code");
+                """)
+            except:
+                pass
+                
+            if otp_present:
+                # Log only periodically to avoid spamming
+                log.info(f"🔑 VB '{name}' memerlukan OTP/Verifikasi. Silakan masukkan OTP secara manual di browser...")
+                time.sleep(5)
+                
+            time.sleep(1)
+        except Exception as e:
+            # If browser is closed or other fatal error
+            break
+
 def launch_portal_browser(name):
     log.info(f"🌐 Membuka browser untuk VB '{name}'...")
     try:
@@ -138,9 +317,18 @@ def launch_portal_browser(name):
         driver.get("https://partner.shopee.co.id/")
         time.sleep(2)
         
-        # Load saved session cookies if they exist
+        # Load saved session cookies if they exist and are valid
         saved = load_session(name)
+        is_valid = False
         if saved:
+            try:
+                from core.browser import validate_session
+                is_valid = validate_session(saved["shopee_tob_token"], saved["shopee_tob_entity_id"])
+            except Exception as val_err:
+                log.warning(f"⚠️ Gagal memvalidasi sesi untuk '{name}': {val_err}")
+                is_valid = False
+
+        if saved and is_valid:
             log.info(f"🔑 Memasukkan cookie sesi tersimpan untuk VB '{name}'...")
             try:
                 driver.add_cookie({"name": "shopee_tob_token", "value": saved["shopee_tob_token"]})
@@ -158,7 +346,7 @@ def launch_portal_browser(name):
             driver.get("https://partner.shopee.co.id/food/dashboard")
             time.sleep(4)
         else:
-            log.warning(f"⚠️ Sesi tidak ditemukan untuk VB '{name}'. Silakan login manual.")
+            log.warning(f"⚠️ Sesi tidak ditemukan atau kedaluwarsa untuk VB '{name}'. Silakan login/autofill manual.")
             driver.get("https://partner.shopee.co.id/login")
             time.sleep(4)
 
@@ -166,18 +354,37 @@ def launch_portal_browser(name):
         cred = get_credentials(name)
         target_merchant = cred.get("merchant_name") if cred else None
 
+        # Wait dynamically for either login page or dashboard to be loaded with merchant info
+        log.info(f"⏳ Menunggu halaman termuat untuk VB '{name}'...")
+        is_logged_in = False
+        active_name = ""
+        
+        for _ in range(30):  # 15 seconds max wait
+            curr_url = driver.current_url.lower()
+            if "login" in curr_url or "authenticate" in curr_url:
+                break
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, ".merchantName")
+                if el.is_displayed():
+                    active_name = el.text.strip()
+                    if active_name:
+                        is_logged_in = True
+                        break
+            except:
+                pass
+            time.sleep(0.5)
+
         # Check login or wrong/admin state
         current_url = driver.current_url.lower()
-        if "login" in current_url or "authenticate" in current_url:
+        if "login" in current_url or "authenticate" in current_url or not is_logged_in:
             if cred:
+                if "login" not in current_url and "authenticate" not in current_url:
+                    driver.get("https://partner.shopee.co.id/login")
+                    time.sleep(4)
                 autofill_login_form(driver, cred, name)
+                # Wait for post login, click lanjutkan, bypass onboarding/selector
+                handle_post_login_flow(driver, name, target_merchant)
         else:
-            # Try to check active merchant name
-            try:
-                active_name = driver.find_element(By.CSS_SELECTOR, ".merchantName").text.strip()
-            except:
-                active_name = ""
-                
             is_admin = "admin" in active_name.lower() or active_name.lower() == "unknown merchant"
             is_wrong_merchant = target_merchant and target_merchant.lower() not in active_name.lower()
             
@@ -200,12 +407,15 @@ def launch_portal_browser(name):
                     try:
                         from core.browser import _deliberate_logout_and_relogin
                         if cred:
-                            _deliberate_logout_and_relogin(
+                            recovered = _deliberate_logout_and_relogin(
                                 driver,
                                 username=cred.get("username"),
                                 password=cred.get("password"),
                                 phone=cred.get("phone")
                             )
+                            if recovered:
+                                # Wait for post login, click lanjutkan, bypass onboarding/selector
+                                handle_post_login_flow(driver, name, target_merchant)
                     except Exception as logout_err:
                         log.error(f"❌ Gagal memicu logout/relogin: {logout_err}")
 
