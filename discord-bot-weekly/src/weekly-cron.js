@@ -265,6 +265,8 @@ async function runTargetPipeline(target, startDate, endDate) {
                     if (currentPlatform !== 'GRAB') { currentPlatform = 'GRAB'; stateChanged = true; }
                 } else if (line.toUpperCase().includes('SHOPEE WEEKLY') || line.toUpperCase().includes('SHOPEE PIPELINE')) {
                     if (currentPlatform !== 'SHOPEE') { currentPlatform = 'SHOPEE'; stateChanged = true; }
+                } else if (line.toUpperCase().includes('GOFOOD WEEKLY') || line.toUpperCase().includes('GOFOOD PIPELINE')) {
+                    if (currentPlatform !== 'GOFOOD') { currentPlatform = 'GOFOOD'; stateChanged = true; }
                 }
 
                 // Parse merchant
@@ -303,7 +305,7 @@ async function runTargetPipeline(target, startDate, endDate) {
                 currentStep = 5;
                 const uploadedFiles = [];
                 let uploadedFolderUrl = null;
-                const searchPaths = ['grab', 'shopee'];
+                const searchPaths = target === 'agency' ? ['grab', 'shopee', 'gofood'] : ['grab', 'shopee'];
 
                 for (const plat of searchPaths) {
                     const platDirName = target === 'vb' ? `${plat}_vb` : plat;

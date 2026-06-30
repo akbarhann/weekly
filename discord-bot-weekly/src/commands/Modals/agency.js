@@ -311,6 +311,8 @@ async function getWeeklyOutlets(platform) {
     const nameIdx = headers.indexOf('Nama Outlet');
     const userIdx = headers.lastIndexOf('Nama Pengguna');
     const merchantIdx = headers.indexOf('Merchant Name');
+    const emailLoginGo1Idx = headers.indexOf('Email Login Go 1');
+    const nomorHP1Idx = headers.indexOf('Nomor HP.1');
 
     if (appIdx === -1 || statusIdx === -1 || nameIdx === -1) {
         console.error('[WEEKLY FETCH] Headers not found in GSheets gid=0:', headers);
@@ -337,14 +339,21 @@ async function getWeeklyOutlets(platform) {
 
         const userVal = userIdx !== -1 && cols[userIdx] ? cols[userIdx].trim() : '';
         const merchantVal = merchantIdx !== -1 && cols[merchantIdx] ? cols[merchantIdx].trim() : '';
+        const gofoodEmail = emailLoginGo1Idx !== -1 && cols[emailLoginGo1Idx] ? cols[emailLoginGo1Idx].trim() : '';
+        const gofoodPhone = nomorHP1Idx !== -1 && cols[nomorHP1Idx] ? cols[nomorHP1Idx].trim() : '';
 
         const isValidGrab = app.includes('grab') && userVal !== '' && userVal !== '-';
         const isValidShopee = app.includes('shopee') && merchantVal !== '' && merchantVal !== '-';
+        const isValidGofood = app.includes('gofood') && (
+            (gofoodEmail !== '' && gofoodEmail !== '-') || 
+            (gofoodPhone !== '' && gofoodPhone !== '-')
+        );
 
         const matchesPlatform =
-            (platform === 'all' && (isValidGrab || isValidShopee)) ||
+            (platform === 'all' && (isValidGrab || isValidShopee || isValidGofood)) ||
             (platform === 'grab' && isValidGrab) ||
-            (platform === 'shopee' && isValidShopee);
+            (platform === 'shopee' && isValidShopee) ||
+            (platform === 'gofood' && isValidGofood);
 
         if (matchesPlatform) {
             outletsSet.add(name);
@@ -364,6 +373,7 @@ const makeProgressEmbed = (currentStepName, title, description, fields = [], has
         if (isAllPlatform) {
             allSteps.push({ name: 'Outlet Grab', icon: '🏪' });
             allSteps.push({ name: 'Outlet Shopee', icon: '🏪' });
+            allSteps.push({ name: 'Outlet GoFood', icon: '🏪' });
         } else {
             allSteps.push({ name: 'Outlet', icon: '🏪' });
         }
@@ -591,6 +601,7 @@ module.exports = {
             let selectedOutlets = [];
             let grabResultValues = [];
             let shopeeResultValues = [];
+            let gofoodResultValues = [];
             let lastInteraction = interaction;
 
             let startDate = toISOFormat(lastMondayForInit);
@@ -605,9 +616,10 @@ module.exports = {
                         title: '📱 Pilih Aplikator',
                         placeholder: 'Pilih platform aplikator...',
                         options: [
-                            { label: 'Semua Aplikator', value: 'all', description: 'Tarik data untuk GrabFood & ShopeeFood' },
+                            { label: 'Semua Aplikator', value: 'all', description: 'Tarik data untuk GrabFood, ShopeeFood, & GoFood' },
                             { label: 'GrabFood', value: 'grab', emoji: { name: '🟢' }, description: 'Hanya tarik data GrabFood' },
-                            { label: 'ShopeeFood', value: 'shopee', emoji: { name: '🟠' }, description: 'Hanya tarik data ShopeeFood' }
+                            { label: 'ShopeeFood', value: 'shopee', emoji: { name: '🟠' }, description: 'Hanya tarik data ShopeeFood' },
+                            { label: 'GoFood', value: 'gofood', emoji: { name: '🔴' }, description: 'Hanya tarik data GoFood' }
                         ],
                         minValues: 1,
                         maxValues: 1,
@@ -819,9 +831,9 @@ module.exports = {
                         if (scope === 'all_outlets') {
                             step = 'scope';
                         } else if (scope === 'select_merchant') {
-                            step = platform === 'all' ? 'outlet_shopee' : 'outlet_single';
+                            step = platform === 'all' ? 'outlet_gofood' : 'outlet_single';
                         } else if (scope === 'run_remaining') {
-                            step = platform === 'all' ? 'outlet_shopee_remaining' : 'outlet_single_remaining';
+                            step = platform === 'all' ? 'outlet_gofood_remaining' : 'outlet_single_remaining';
                         }
                         continue;
                     }
@@ -964,7 +976,51 @@ module.exports = {
                     }
 
                     shopeeResultValues = result.values;
-                    selectedOutlets = grabResultValues.concat(shopeeResultValues);
+                    lastInteraction = result.lastInteraction;
+                    step = 'outlet_gofood';
+
+                } else if (step === 'outlet_gofood') {
+                    const gofoodOutlets = await getWeeklyOutlets('gofood');
+                    if (gofoodOutlets.length === 0) {
+                        return lastInteraction.reply({
+                            content: '❌ Gagal memuat daftar outlet GoFood live.',
+                            flags: 64
+                        });
+                    }
+                    const gofoodOptions = gofoodOutlets.map(name => ({
+                        label: name.substring(0, 100),
+                        value: name
+                    }));
+
+                    const result = await askSelection(lastInteraction, {
+                        stepName: 'Outlet GoFood',
+                        title: '🏪 Pilih Outlet GoFood',
+                        placeholder: 'Pilih satu atau lebih outlet GoFood...',
+                        options: gofoodOptions,
+                        minValues: 1,
+                        maxValues: gofoodOptions.length,
+                        fields: [
+                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Platform', value: 'ALL (GoFood)', inline: true },
+                            { name: 'Cakupan', value: 'Merchant Terpilih', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true },
+                            { name: 'Outlet Grab Terpilih', value: grabResultValues.length.toString(), inline: true },
+                            { name: 'Outlet Shopee Terpilih', value: shopeeResultValues.length.toString(), inline: true }
+                        ],
+                        hasOutletStep: true,
+                        isAllPlatform: true,
+                        showBackButton: true,
+                        initialSelections: gofoodResultValues
+                    });
+
+                    if (result.status === 'back') {
+                        step = 'outlet_shopee';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
+
+                    gofoodResultValues = result.values;
+                    selectedOutlets = grabResultValues.concat(shopeeResultValues).concat(gofoodResultValues);
                     lastInteraction = result.lastInteraction;
                     step = 'period';
 
@@ -1121,9 +1177,8 @@ module.exports = {
                             step = 'outlet_grab_remaining';
                         } else {
                             shopeeResultValues = [];
-                            selectedOutlets = grabResultValues.concat(shopeeResultValues);
                             skipExisting = true;
-                            step = 'period';
+                            step = 'outlet_gofood_remaining';
                         }
                         continue;
                     }
@@ -1156,7 +1211,87 @@ module.exports = {
                     }
 
                     shopeeResultValues = result.values;
-                    selectedOutlets = grabResultValues.concat(shopeeResultValues);
+                    skipExisting = true;
+                    lastInteraction = result.lastInteraction;
+                    step = 'outlet_gofood_remaining';
+
+                } else if (step === 'outlet_gofood_remaining') {
+                    const rawOutlets = await getWeeklyOutlets('gofood');
+                    const remainingGofood = rawOutlets.filter(name => !isOutletDownloaded('agency', 'gofood', startDate, endDate, name));
+
+                    if (remainingGofood.length === 0) {
+                        const embed = makeProgressEmbed('Outlet GoFood', '🏪 GoFood: Jalankan yang Belum', '❌ **Tidak ada outlet GoFood yang belum diunduh untuk periode ini.**', [
+                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Platform', value: 'ALL (GoFood)', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true },
+                            { name: 'Outlet Grab Terpilih', value: grabResultValues.length.toString(), inline: true },
+                            { name: 'Outlet Shopee Terpilih', value: shopeeResultValues.length.toString(), inline: true }
+                        ], true, true);
+
+                        const row = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('agency_back_btn')
+                                .setLabel('⬅️ Kembali')
+                                .setStyle(ButtonStyle.Secondary),
+                            new ButtonBuilder()
+                                .setCustomId('agency_continue_btn')
+                                .setLabel('➡️ Lanjutkan')
+                                .setStyle(ButtonStyle.Success)
+                        );
+
+                        await lastInteraction.update({
+                            embeds: [embed],
+                            components: [row]
+                        });
+
+                        const msg = lastInteraction.message || await lastInteraction.fetchReply();
+                        const choice = await msg.awaitMessageComponent({
+                            filter: buttonI => buttonI.user.id === interaction.user.id && (buttonI.customId === 'agency_back_btn' || buttonI.customId === 'agency_continue_btn'),
+                            time: 300000
+                        });
+
+                        lastInteraction = choice;
+                        if (choice.customId === 'agency_back_btn') {
+                            step = 'outlet_shopee_remaining';
+                        } else {
+                            gofoodResultValues = [];
+                            selectedOutlets = grabResultValues.concat(shopeeResultValues).concat(gofoodResultValues);
+                            skipExisting = true;
+                            step = 'period';
+                        }
+                        continue;
+                    }
+
+                    const outletOptions = remainingGofood.map(name => ({
+                        label: name.substring(0, 100),
+                        value: name
+                    }));
+
+                    const result = await askRemainingSelection(lastInteraction, {
+                        stepName: 'Outlet GoFood',
+                        title: `🏪 GoFood: Jalankan yang Belum (${remainingGofood.length} tersisa)`,
+                        placeholder: 'Pilih satu atau lebih outlet GoFood...',
+                        options: outletOptions,
+                        allRemainingValues: remainingGofood,
+                        fields: [
+                            { name: 'Tipe', value: 'AGENCY', inline: true },
+                            { name: 'Platform', value: 'ALL (GoFood)', inline: true },
+                            { name: 'Periode', value: `${startDate} s/d ${endDate}`, inline: true },
+                            { name: 'Outlet Grab Terpilih', value: grabResultValues.length.toString(), inline: true },
+                            { name: 'Outlet Shopee Terpilih', value: shopeeResultValues.length.toString(), inline: true }
+                        ],
+                        hasOutletStep: true,
+                        isAllPlatform: true
+                    });
+
+                    if (result.status === 'back') {
+                        step = 'outlet_shopee_remaining';
+                        lastInteraction = result.lastInteraction;
+                        continue;
+                    }
+
+                    gofoodResultValues = result.values;
+                    selectedOutlets = grabResultValues.concat(shopeeResultValues).concat(gofoodResultValues);
                     skipExisting = true;
                     lastInteraction = result.lastInteraction;
                     step = 'period';
@@ -1440,7 +1575,8 @@ module.exports = {
                 skipExisting: skipExisting,
                 channelId: interaction.channelId,
                 grabOutlet: grabResultValues.join('|'),
-                shopeeMerchant: shopeeResultValues.join('|')
+                shopeeMerchant: shopeeResultValues.join('|'),
+                gofoodOutlet: gofoodResultValues.join('|')
             };
 
             let currentStep = 1;
@@ -1518,6 +1654,8 @@ module.exports = {
                         if (currentPlatform !== 'GRAB') { currentPlatform = 'GRAB'; stateChanged = true; }
                     } else if (line.toUpperCase().includes('SHOPEE WEEKLY') || line.toUpperCase().includes('SHOPEE PIPELINE')) {
                         if (currentPlatform !== 'SHOPEE') { currentPlatform = 'SHOPEE'; stateChanged = true; }
+                    } else if (line.toUpperCase().includes('GOFOOD WEEKLY') || line.toUpperCase().includes('GOFOOD PIPELINE')) {
+                        if (currentPlatform !== 'GOFOOD') { currentPlatform = 'GOFOOD'; stateChanged = true; }
                     }
 
                     // Parse merchant
@@ -1565,7 +1703,7 @@ module.exports = {
                     const attachments = [];
                     const uploadedFiles = [];
                     let uploadedFolderUrl = null;
-                    const searchPaths = platform === 'all' ? ['grab', 'shopee'] : [platform];
+                    const searchPaths = platform === 'all' ? ['grab', 'shopee', 'gofood'] : [platform];
 
                     // Update: uploading files to Google Drive
                     for (const plat of searchPaths) {

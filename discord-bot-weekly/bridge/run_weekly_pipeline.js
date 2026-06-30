@@ -179,7 +179,10 @@ function runWeeklyPipeline(formData, onLog = () => { }) {
         if (formData.shopeeMerchant) {
             args.push('--shopee-merchant', formData.shopeeMerchant);
         }
-        if (!formData.grabOutlet && !formData.shopeeMerchant && outlet) {
+        if (formData.gofoodOutlet) {
+            args.push('--gofood-outlet', formData.gofoodOutlet);
+        }
+        if (!formData.grabOutlet && !formData.shopeeMerchant && !formData.gofoodOutlet && outlet) {
             args.push('--outlet', outlet);
         }
         if (branch) {

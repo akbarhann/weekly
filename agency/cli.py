@@ -218,6 +218,31 @@ def run_shopee(start_date: str, end_date: str, merchant_filter: str = None, skip
     result = subprocess.run(cmd, cwd=shopee_dir)
     return result.returncode == 0
 
+def run_gofood(start_date: str, end_date: str, outlet_filter: str = None, branch_filter: str = None):
+    gofood_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src", "goscrapperv2")
+    if not os.path.isdir(gofood_dir):
+        print(f"{RED}[ERROR]{RESET} GoFood directory not found: {gofood_dir}")
+        return False
+
+    output_dir = _resolve_output_dir("gofood", start_date, end_date)
+    import subprocess
+    python_exe = _resolve_python_executable()
+    cmd = [
+        python_exe, "-u", "gofood.py",
+        "--start-date", start_date,
+        "--end-date", end_date,
+        "--output-dir", output_dir,
+        "--task", "2"
+    ]
+    if outlet_filter:
+        cmd.extend(["--outlet", outlet_filter])
+    if branch_filter:
+        cmd.extend(["--branch", branch_filter])
+
+    print(f"\n{YELLOW}{BOLD}▶ GOFOOD WEEKLY PIPELINE{RESET}")
+    result = subprocess.run(cmd, cwd=gofood_dir)
+    return result.returncode == 0
+
 def interactive_mode():
     state = "platform"
     
@@ -226,6 +251,7 @@ def interactive_mode():
     outlet = []
     branch = []
     shopee_merchant = []
+    gofood_outlet = []
     start_date = None
     end_date = None
     
@@ -257,20 +283,21 @@ def interactive_mode():
             print(f"  {BOLD}Pilih platform:{RESET}")
             print(f"    {GREEN}[1]{RESET} Grab")
             print(f"    {MAGENTA}[2]{RESET} Shopee")
-            print(f"    {CYAN}[3]{RESET} Kedua Platform (Grab + Shopee)")
-            print(f"    {YELLOW}[4]{RESET} Keluar")
+            print(f"    {YELLOW}[3]{RESET} GoFood")
+            print(f"    {CYAN}[4]{RESET} Semua Platform (Grab + Shopee + GoFood)")
+            print(f"    {RED}[5]{RESET} Keluar")
             print()
             
-            choice = input(f"  {BOLD}Pilihan (1/2/3/4):{RESET} ").strip()
-            if choice == "4":
+            choice = input(f"  {BOLD}Pilihan (1/2/3/4/5):{RESET} ").strip()
+            if choice == "5":
                 print("  Keluar.")
                 sys.exit(0)
-            elif choice in ("1", "2", "3"):
-                platform_map = {"1": "grab", "2": "shopee", "3": "all"}
+            elif choice in ("1", "2", "3", "4"):
+                platform_map = {"1": "grab", "2": "shopee", "3": "gofood", "4": "all"}
                 platform = platform_map[choice]
                 state = "scope"
             else:
-                print(f"  {RED}Input tidak valid. Masukkan 1, 2, 3, atau 4.{RESET}")
+                print(f"  {RED}Input tidak valid. Masukkan 1, 2, 3, 4, atau 5.{RESET}")
                 time.sleep(1)
 
         elif state == "scope":
@@ -287,13 +314,16 @@ def interactive_mode():
                 outlet = []
                 branch = []
                 shopee_merchant = []
+                gofood_outlet = []
                 state = "date"
             elif scope_choice == "2":
                 df_main = load_df()
                 if platform in ("grab", "all"):
                     state = "grab_outlet"
-                else:
+                elif platform == "shopee":
                     state = "shopee_merchant"
+                else:
+                    state = "gofood_outlet"
             else:
                 print(f"  {RED}Input tidak valid. Masukkan 1, 2, atau 3.{RESET}")
 
@@ -419,12 +449,55 @@ def interactive_mode():
                     state = "scope"
             elif m_choices.lower() == "all":
                 shopee_merchant = merchants
-                state = "date"
+                if platform == "all":
+                    state = "gofood_outlet"
+                else:
+                    state = "date"
             else:
                 try:
                     indices = [int(x.strip()) for x in m_choices.split(",") if x.strip()]
                     if all(1 <= i <= len(merchants) for i in indices):
                         shopee_merchant = [merchants[i - 1] for i in indices]
+                        if platform == "all":
+                            state = "gofood_outlet"
+                        else:
+                            state = "date"
+                    else:
+                        print(f"  {RED}Pilihan tidak valid.{RESET}")
+                except ValueError:
+                    print(f"  {RED}Pilihan tidak valid.{RESET}")
+
+        elif state == "gofood_outlet":
+            df_gofood = df_main[
+                df_main["Aplikasi"].str.contains("GoFood", na=False, case=False) & 
+                df_main["Status"].str.contains("Live", na=False, case=False)
+            ]
+            if df_gofood.empty:
+                print(f"  {RED}[ERROR] Tidak ada outlet GoFood di Google Sheets.{RESET}")
+                state = "date"
+                continue
+                
+            gofood_outlets = sorted(df_gofood["Nama Outlet"].dropna().unique())
+            print(f"\n  {BOLD}Pilih Outlet GoFood:{RESET}")
+            for idx, o_name in enumerate(gofood_outlets):
+                print(f"    {GREEN}[{idx + 1}]{RESET} {o_name}")
+            print(f"    {CYAN}[b]{RESET} Kembali ke menu sebelumnya")
+            print()
+            
+            o_choices = input(f"  {BOLD}Pilih nomor outlet GoFood (contoh: 1,3 atau 'all' atau 'b'):{RESET} ").strip()
+            if o_choices.lower() == "b":
+                if platform == "all":
+                    state = "shopee_merchant"
+                else:
+                    state = "scope"
+            elif o_choices.lower() == "all":
+                gofood_outlet = gofood_outlets
+                state = "date"
+            else:
+                try:
+                    indices = [int(x.strip()) for x in o_choices.split(",") if x.strip()]
+                    if all(1 <= i <= len(gofood_outlets) for i in indices):
+                        gofood_outlet = [gofood_outlets[i - 1] for i in indices]
                         state = "date"
                     else:
                         print(f"  {RED}Pilihan tidak valid.{RESET}")
@@ -459,8 +532,10 @@ def interactive_mode():
                             state = "grab_branch"
                         else:
                             state = "grab_outlet"
+                    elif platform == "gofood":
+                        state = "gofood_outlet"
                     else: # all
-                        state = "shopee_merchant"
+                        state = "gofood_outlet"
             elif date_choice == "1":
                 start_date = default_start
                 end_date = default_end
@@ -485,6 +560,7 @@ def interactive_mode():
             if scope_choice == "2":
                 if outlet: print(f"  Grab Outlet : {BOLD}{outlet} ({branch}){RESET}")
                 if shopee_merchant: print(f"  Shopee Merchant : {BOLD}{shopee_merchant}{RESET}")
+                if gofood_outlet: print(f"  GoFood Outlet : {BOLD}{gofood_outlet}{RESET}")
             else:
                 print(f"  Outlet   : {BOLD}Semua Outlet{RESET}")
             print(f"  Start    : {BOLD}{start_date}{RESET}")
@@ -513,11 +589,11 @@ def interactive_mode():
             else:
                 print(f"  {RED}Pilihan tidak valid.{RESET}")
 
-    return platform, start_date, end_date, outlet, branch, shopee_merchant, skip_existing
+    return platform, start_date, end_date, outlet, branch, shopee_merchant, gofood_outlet, skip_existing
 
 def main():
     parser = argparse.ArgumentParser(description="Agency Report — Unified Weekly Transaction Pipeline")
-    parser.add_argument("platform", nargs="?", default=None, help="Platform: grab, shopee, all")
+    parser.add_argument("platform", nargs="?", default=None, help="Platform: grab, shopee, gofood, all")
     parser.add_argument("--start", type=str, default=None, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, default=None, help="End date (YYYY-MM-DD)")
     parser.add_argument("--user", type=str, default=None, help="Filter specific username (Grab only)")
@@ -525,6 +601,7 @@ def main():
     parser.add_argument("--branch", type=str, default=None, help="Filter specific branch name")
     parser.add_argument("--grab-outlet", type=str, default=None, help="Filter specific Grab outlet names (pipe-separated)")
     parser.add_argument("--shopee-merchant", type=str, default=None, help="Filter specific Shopee merchant names (pipe-separated)")
+    parser.add_argument("--gofood-outlet", type=str, default=None, help="Filter specific GoFood outlet names (pipe-separated)")
     parser.add_argument("--skip-existing", action="store_true", help="Skip already processed/downloaded outlets/merchants")
     args = parser.parse_args()
 
@@ -547,8 +624,9 @@ def main():
             load_dotenv()
 
             skip_existing = False
+            gofood_outlet = []
             if args.platform is None or args.start is None or args.end is None:
-                platform, start_date, end_date, outlet, branch, shopee_merchant, skip_existing = interactive_mode()
+                platform, start_date, end_date, outlet, branch, shopee_merchant, gofood_outlet, skip_existing = interactive_mode()
             else:
                 platform = args.platform.lower()
                 start_date = args.start
@@ -556,18 +634,21 @@ def main():
                 branch = [x.strip() for x in args.branch.split("|")] if args.branch else []
                 
                 # Handle separate outlet filters if provided
-                if args.grab_outlet or args.shopee_merchant:
+                if args.grab_outlet or args.shopee_merchant or args.gofood_outlet:
                     outlet = [x.strip() for x in args.grab_outlet.split("|")] if args.grab_outlet else []
                     raw_shopee = [x.strip() for x in args.shopee_merchant.split("|")] if args.shopee_merchant else []
                     shopee_merchant = []
                     for s in raw_shopee:
                         shopee_merchant.append(_resolve_shopee_merchant(s, branch_name=args.branch))
+                    gofood_outlet = [x.strip() for x in args.gofood_outlet.split("|")] if args.gofood_outlet else []
                 else:
                     outlet = [x.strip() for x in args.outlet.split("|")] if args.outlet else []
                     shopee_merchant = []
+                    gofood_outlet = []
                     if args.outlet:
                         for o in outlet:
                             shopee_merchant.append(_resolve_shopee_merchant(o, branch_name=args.branch))
+                        gofood_outlet = outlet.copy()
                             
                 skip_existing = args.skip_existing
                 banner()
@@ -586,6 +667,11 @@ def main():
             if platform in ("shopee", "all"):
                 m_str = "|".join(shopee_merchant) if shopee_merchant else None
                 results["Shopee"] = run_shopee(start_date, end_date, merchant_filter=m_str, skip_existing=skip_existing)
+
+            if platform in ("gofood", "all"):
+                go_str = "|".join(gofood_outlet) if gofood_outlet else None
+                b_str = "|".join(branch) if branch else None
+                results["GoFood"] = run_gofood(start_date, end_date, outlet_filter=go_str, branch_filter=b_str)
 
             elapsed = datetime.now() - start_time
             print(f"\n{CYAN}{BOLD}  SUMMARY{RESET}")

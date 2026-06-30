@@ -2129,7 +2129,7 @@ if __name__ == "__main__":
 
 
     # --- TULIS BASELINE EXCEL GABUNGAN ---
-    if all_baseline_results:
+    if all_baseline_results and args_cli.task == "1":
         if not (custom_start_date and custom_end_date):
             now = datetime.now()
             first_day_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
