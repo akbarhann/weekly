@@ -170,7 +170,8 @@ def initialize_all_sessions(headless_on_login=False, only_portal=None):
                 password=password or None,
                 phone=phone or None,
                 headless=headless_on_login, # Usually non-headless or headless depending on flag
-                close_browser=True
+                close_browser=True,
+                target_name=merchant
             )
             if session:
                 log.info(f"🎉 Sesi '{name}' berhasil didapatkan dan disimpan!")

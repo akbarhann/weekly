@@ -1,6 +1,6 @@
 {
   "headless_grab": true,
-  "headless_vb": true,
+  "headless_vb": false,
   "max_concurrency": 1,
   "use_local_credentials": false
 }

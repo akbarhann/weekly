@@ -846,86 +846,11 @@ def _perform_login(driver, wait, username: str = None, password: str = None, pho
             
         if not pass_input: raise Exception("Could not find Password input field")
 
-        # Fill via React prototype setter to ensure framework state synchronization
-        if user_input:
-            driver.execute_script("""
-                var el = arguments[0];
-                var val = arguments[1];
-                el.focus();
-                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                setter.call(el, val);
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                el.dispatchEvent(new Event('blur', { bubbles: true }));
-            """, user_input, username)
-            
-        if pass_input:
-            driver.execute_script("""
-                var el = arguments[0];
-                var val = arguments[1];
-                el.focus();
-                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                setter.call(el, val);
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                el.dispatchEvent(new Event('blur', { bubbles: true }));
-            """, pass_input, password)
-
-        time.sleep(0.5)
-
-        # Native click and keypress simulation fallback
-        if user_input:
-            try:
-                user_input.click()
-                time.sleep(0.2)
-                user_input.send_keys(Keys.END)
-                user_input.send_keys(Keys.BACKSPACE)
-                user_input.send_keys(username[-1])
-                time.sleep(0.2)
-            except:
-                pass
-
-        if pass_input:
-            try:
-                pass_input.click()
-                time.sleep(0.2)
-                pass_input.send_keys(Keys.END)
-                pass_input.send_keys(Keys.BACKSPACE)
-                pass_input.send_keys(password[-1])
-                time.sleep(0.2)
-            except:
-                pass
-
-        # Trigger blur on both to finalize validation
-        try:
-            driver.execute_script("""
-                if (arguments[0]) arguments[0].blur();
-                if (arguments[1]) arguments[1].blur();
-            """, user_input, pass_input)
-        except:
-            pass
-        time.sleep(0.5)
-
-        # CRITICAL: React validation requires actual user interaction events
-        # Click and focus the fields sequentially to activate the disabled login button.
-        try:
-            for field in [user_input, pass_input, user_input]:
-                if field:
-                    driver.execute_script("""
-                        var el = arguments[0];
-                        el.focus();
-                        el.click();
-                        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-                        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                        el.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                    """, field)
-                    time.sleep(0.2)
-        except Exception as e:
-            log.warning(f"⚠️ Failed to dispatch interaction events: {e}")
-
+        user_input.send_keys(Keys.CONTROL + "a", Keys.BACKSPACE)
+        human_like_typing(user_input, username)
+        pass_input.send_keys(Keys.CONTROL + "a", Keys.BACKSPACE)
+        human_like_typing(pass_input, password)
+        
         # Click login button
         login_btn = None
         for btn_sel in ["//button[contains(., 'Masuk') or contains(., 'Log In')]", "//button[@type='submit']"]:
@@ -934,19 +859,7 @@ def _perform_login(driver, wait, username: str = None, password: str = None, pho
                 if btn.is_displayed(): login_btn = btn; break
             except: continue
 
-        if login_btn:
-            try:
-                driver.execute_script("""
-                    var btn = arguments[0];
-                    if (btn.hasAttribute('disabled')) {
-                        btn.removeAttribute('disabled');
-                        btn.classList.remove('ant-btn-loading', 'disabled');
-                    }
-                """, login_btn)
-                time.sleep(0.2)
-                login_btn.click()
-            except:
-                driver.execute_script("arguments[0].click();", login_btn)
+        if login_btn: login_btn.click()
         else: raise Exception("Could not find Login button")
 
     # Check for immediate credential errors
@@ -1533,6 +1446,7 @@ def get_session(username=None, password=None, phone=None, headless=True, close_b
         driver = _init_driver(headless=headless, account_name=account_name)
         wait = WebDriverWait(driver, 30)
         session_success = False
+        just_logged_in = False
 
         try:
             # ── Step 1: Check browser state first (Profile session) ──
@@ -1608,6 +1522,7 @@ def get_session(username=None, password=None, phone=None, headless=True, close_b
                         log.error("❌ [AUTH] _perform_login failed.")
                         driver.quit()
                         continue
+                    just_logged_in = True
                     
                 # Wait dynamically for either dashboard, onboarding, or merchant-selector URL (up to 15s)
                 log.info("  ⏳ Menunggu pengalihan halaman setelah login...")
@@ -1794,7 +1709,34 @@ def get_session(username=None, password=None, phone=None, headless=True, close_b
                 if target_name:
                     success = auto_switch_merchant(driver, target_name, is_retry=(attempt == 2))
                     if not success:
-                        log.warning(f"⚠️ [MERCHANT] auto_switch_merchant failed for target {target_name}. Initiating logout/relogin recovery...")
+                        if just_logged_in:
+                            log.error(f"❌ [MERCHANT] auto_switch_merchant failed for target {target_name} on fresh login. Aborting.")
+                            success = False
+                        else:
+                            log.warning(f"⚠️ [MERCHANT] auto_switch_merchant failed for target {target_name}. Initiating logout/relogin recovery...")
+                            recovered = _deliberate_logout_and_relogin(
+                                driver,
+                                username=username,
+                                password=password,
+                                phone=phone,
+                            )
+                            if recovered:
+                                log.info("🔄 [MERCHANT] Recovery successful. Retrying merchant switch...")
+                                success = auto_switch_merchant(driver, target_name, is_retry=(attempt == 2))
+                            else:
+                                log.error("❌ Recovery failed.")
+                                success = False
+                else:
+                    if just_logged_in:
+                        log.info("🔄 [MERCHANT] Unknown/Admin/Missing active merchant on fresh login — running merchant selection...")
+                        success = _handle_merchant_selection(driver, active_id_forced=None, interactive=interactive)
+                    else:
+                        # When merchant cannot be detected, do a deliberate logout + relogin
+                        # via the Chrome profile. This gives a clean session state without OTP:
+                        #   1. Click profile → select 'Log Out' from dropdown
+                        #   2. Confirm logout
+                        #   3. Chrome profile auto-logs back in (no OTP)
+                        log.info("🔄 [MERCHANT] Unknown/Admin/Missing merchant — initiating logout/relogin recovery...")
                         recovered = _deliberate_logout_and_relogin(
                             driver,
                             username=username,
@@ -1802,30 +1744,11 @@ def get_session(username=None, password=None, phone=None, headless=True, close_b
                             phone=phone,
                         )
                         if recovered:
-                            log.info("🔄 [MERCHANT] Recovery successful. Retrying merchant switch...")
-                            success = auto_switch_merchant(driver, target_name, is_retry=(attempt == 2))
+                            # After re-entry, run merchant selection normally
+                            success = _handle_merchant_selection(driver, active_id_forced=None, interactive=interactive)
                         else:
-                            log.error("❌ Recovery failed.")
+                            log.error("❌ Logout/relogin recovery failed. Cannot proceed.")
                             success = False
-                else:
-                    # When merchant cannot be detected, do a deliberate logout + relogin
-                    # via the Chrome profile. This gives a clean session state without OTP:
-                    #   1. Click profile → select 'Log Out' from dropdown
-                    #   2. Confirm logout
-                    #   3. Chrome profile auto-logs back in (no OTP)
-                    log.info("🔄 [MERCHANT] Unknown/Admin/Missing merchant — initiating logout/relogin recovery...")
-                    recovered = _deliberate_logout_and_relogin(
-                        driver,
-                        username=username,
-                        password=password,
-                        phone=phone,
-                    )
-                    if recovered:
-                        # After re-entry, run merchant selection normally
-                        success = _handle_merchant_selection(driver, active_id_forced=None, interactive=interactive)
-                    else:
-                        log.error("❌ Logout/relogin recovery failed. Cannot proceed.")
-                        success = False
                 if not success:
                     log.error("❌ Merchant selection failed.")
                     driver.quit()

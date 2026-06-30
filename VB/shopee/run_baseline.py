@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # Add current directory so init_sessions can be imported
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from core.browser import load_session, validate_session
+from core.browser import load_session, validate_session, get_session
 from core.client import ShopeeClient
 from core.logger import get_logger
 from init_sessions import initialize_all_sessions, get_vb_portals
@@ -464,38 +464,54 @@ def run_pipeline():
                 pass
         else:
             headless_login = True
-
-        log.info("🔑 Step 1: Checking and initializing portal sessions sequentially...")
-        # Pass only the account names that were selected by the merchant filter,
-        # so portals that were NOT selected are not initialized unnecessarily.
-        selected_account_names = [p["account_name"] for p in portals_to_run]
-        sessions_ok = initialize_all_sessions(
-            headless_on_login=headless_login,
-            only_portal=selected_account_names,
-        )
-        if not sessions_ok:
-            log.warning("⚠️ Some sessions are missing or expired. Continuing anyway but some tasks may fail.")
-
-        # ── 2. Phase 2: Parallel Trigger & Download ──
-        log.info(f"🚀 Step 2: Triggering and downloading reports in parallel (max 4 concurrent worker threads)...")
+        log.info("🔑 Step 1 & 2: Checking session and processing portals sequentially...")
         os.makedirs(report_dir, exist_ok=True)
-        
-        with ThreadPoolExecutor(max_workers=min(4, len(portals_to_run))) as executor:
-            futures = {
-                executor.submit(process_portal, portal, global_ranges, report_dir): portal 
-                for portal in portals_to_run
-            }
+
+        for portal in portals_to_run:
+            name = portal["account_name"]
+            merchant = portal["merchant_name"]
+            username = portal.get("username")
+            password = portal.get("password")
+            phone = portal.get("phone")
+
+            log.info(f"\n🔍 Checking session for: {name} ({merchant})")
             
-            for future in as_completed(futures):
-                portal = futures[future]
+            session_ok = False
+            saved = load_session(name)
+            if saved and validate_session(saved["shopee_tob_token"], saved["shopee_tob_entity_id"]):
+                log.info(f"✅ Sesi '{name}' aktif dan valid. Tidak perlu login ulang.")
+                session_ok = True
+            else:
+                log.warning(f"⚠️ Sesi '{name}' kedaluwarsa atau belum ada. Memulai browser login...")
                 try:
-                    success = future.result()
-                    if success:
-                        log.info(f"✅ [PROGRESS] Portal '{portal['account_name']}' completed successfully.")
+                    session = get_session(
+                        account_name=name,
+                        username=username or None,
+                        password=password or None,
+                        phone=phone or None,
+                        headless=headless_login,
+                        close_browser=True,
+                        target_name=merchant
+                    )
+                    if session:
+                        log.info(f"🎉 Sesi '{name}' berhasil didapatkan dan disimpan!")
+                        session_ok = True
                     else:
-                        log.error(f"❌ [PROGRESS] Portal '{portal['account_name']}' failed.")
+                        log.error(f"❌ Gagal masuk ke akun '{name}'.")
                 except Exception as e:
-                    log.error(f"❌ [PROGRESS] Portal '{portal['account_name']}' raised exception: {e}")
+                    log.error(f"❌ Error saat login '{name}': {e}")
+            
+            if session_ok:
+                try:
+                    success = process_portal(portal, global_ranges, report_dir)
+                    if success:
+                        log.info(f"✅ [PROGRESS] Portal '{name}' completed successfully.")
+                    else:
+                        log.error(f"❌ [PROGRESS] Portal '{name}' failed.")
+                except Exception as e:
+                    log.error(f"❌ [PROGRESS] Portal '{name}' raised exception: {e}")
+            else:
+                log.error(f"❌ Skipping data processing for '{name}' due to missing/expired session.")
 
     # ── 3. Phase 3: Merging to 0Master.xlsx ──
     log.info("📊 [PROGRESS] PHASE 3: Merging all downloaded VB files to 0Master.xlsx...")
