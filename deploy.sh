@@ -11,6 +11,10 @@ echo "=== Restoring Chrome Profile in Agency ==="
 git restore agency/data/chrome_profile/
 git clean -fdx agency/data/chrome_profile/
 
+echo "=== Restoring Chrome Profile in VB ==="
+git restore VB/data/chrome_profiles/
+git clean -fdx VB/data/chrome_profiles/
+
 echo "=== Pulling latest changes from GitHub ==="
 git pull
 
