@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=akbarhann
-WorkingDirectory=/home/akbarhann/project/weekly/discord-bot-weekly
+User=asya
+WorkingDirectory=/mnt/DATA/Proyek/agency/discord-bot-weekly
 ExecStart=/usr/bin/env node index.js
 Restart=always
 RestartSec=5
@@ -14,7 +14,7 @@ StandardError=journal
 SyslogIdentifier=weekly-discord-bot
 
 # Loads environment variables from the .env file
-EnvironmentFile=/home/akbarhann/project/weekly/discord-bot-weekly/.env
+EnvironmentFile=/mnt/DATA/Proyek/agency/discord-bot-weekly/.env
 
 [Install]
 WantedBy=multi-user.target

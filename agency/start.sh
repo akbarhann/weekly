@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Pindah ke direktori tempat script berada
+cd "$(dirname "$0")"
+
 echo "=================================================="
 echo "[SETUP] Mempersiapkan lingkungan Python (UV)..."
 echo "=================================================="

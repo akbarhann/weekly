@@ -2,6 +2,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
+:: Pindah ke direktori tempat script berada
+cd /d "%~dp0"
+
 echo ==================================================
 echo [SETUP] Mempersiapkan lingkungan Python (UV)...
 echo ==================================================

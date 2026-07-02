@@ -843,19 +843,19 @@ def login_outlet_gofood_flow(outlet_info):
 
                         time.sleep(1.0)
 
-                        if time.time() - start_time > 5:
-                            # Fallback URL Check: Jika setelah 5 detik masih stuck di URL login, anggap butuh retry/verifikasi
+                        if time.time() - start_time > 20:
+                            # Fallback URL Check: Jika setelah 20 detik masih stuck di URL login, anggap butuh retry/verifikasi
                             try:
                                 if "/auth/login" in page.url:
-                                    console.print("   [warning]⚠️ (Fallback) Timeout 5 detik: URL masih stuck di halaman login. Mempercepat percobaan ulang...[/warning]")
+                                    console.print("   [warning]⚠️ (Fallback) Timeout 20 detik: URL masih stuck di halaman login. Mempercepat percobaan ulang...[/warning]")
                                     # Menambah kompensasi karena bisa jadi ini peringatan verifikasi yang terlewat dari deteksi teks
                                     max_login_attempts = 3
                                     break
                             except Exception:
                                 pass
 
-                        if time.time() - start_time > 15:
-                            console.print("[warning]⚠️ Timeout 15 detik menunggu access_token.[/warning]")
+                        if time.time() - start_time > 35:
+                            console.print("[warning]⚠️ Timeout 35 detik menunggu access_token.[/warning]")
                             break
 
                 except KeyboardInterrupt:
@@ -1626,7 +1626,6 @@ def ambil_data_analytics(write_header=True, start_date=None, end_date=None, retu
         # --- Kirim ke GSheet Harian ---
         if "--no-sheet" not in sys.argv:
             try:
-                import sys
                 _this_dir = os.path.dirname(os.path.abspath(__file__))
                 if _this_dir not in sys.path:
                     sys.path.insert(0, _this_dir)
